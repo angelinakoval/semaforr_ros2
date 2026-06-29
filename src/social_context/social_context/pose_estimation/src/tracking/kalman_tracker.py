@@ -64,6 +64,26 @@ class KalmanPersonTracker():
         self.missed = 0
         self.hits = 1
         self.state = 'TENTATIVE'  # Can be 'TENTATIVE', 'CONFIRMED' (3 hits for now), 'DELETED'
+        self.confidence = 0.0
+        self.appearance_feature = None 
+
+
+    def update_appearance_feature(self, feature, ema_alpha=0.8):
+        """
+        Update the appearance feature using Exponential Moving Average (EMA)
+
+        Args:
+            feature: New appearance feature vector
+            ema_alpha: EMA smoothing factor (0 < alpha < 1)
+        """
+        if feature is None:
+            return 
+
+        if self.appearance_feature is None:
+            self.appearance_feature = feature
+        else:
+            self.appearance_feature = ema_alpha * self.appearance_feature + (1 - ema_alpha) * feature
+
 
     def predict(self):
         """
@@ -79,24 +99,28 @@ class KalmanPersonTracker():
 
         return (predicted_x, predicted_y)
 
-    def update (self, new_position, hits_threshold = 3):
+    def update (self, new_position, confidence = 0.0, hits_threshold = 2):
         """
         Update the Kalman Filter with a new position measurement
 
         Args:
             new_position: (x, y)
+            confidence: Detection confidence from MediaPipe (0.0 to 1.0)
+            hits_threshold: Number of consecutive hits before a tracker is confirmed
         """
+        self.kf.R = np.eye(2) * 0.1* (1.0 - confidence) + np.eye(2)*1e-6 # Adjust measurement noise based on confidence
         self.kf.update(np.array([[new_position[0]], [new_position[1]]]))
         self.history.append(new_position)
         self.missed = 0
         self.hits += 1
+        self.confidence = confidence
 
         # Threshold to confirm a track - if we have 3 hits, we consider it confirmed (COULD BE CHANGED)
         if self.state == 'TENTATIVE' and self.hits >= hits_threshold:
             self.state = 'CONFIRMED'
 
 
-    def mark_missed(self, missed_threshold = 5):
+    def mark_missed(self, missed_threshold = 15):
         """
         Mark the person as missed
 

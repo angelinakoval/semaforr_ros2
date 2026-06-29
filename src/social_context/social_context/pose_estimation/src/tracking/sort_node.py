@@ -2,13 +2,16 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseArray, Pose
 from .sort_tracker import SortTracker
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+from .feature_extractor import FeatureExtractor
 
 class SortNode(Node):
     """
     ROS2 node for SORT tracking.
 
-    Subscribes to: /human_poses_3d (PoseArray with 3D detections)
-    Publishes to: /tracked_human_poses (PoseArray with tracked 3D positions)
+    Subscribes to: /human_poses_3d_global (PoseArray with 3D detections)
+    Publishes to: /tracked_human_poses_global (PoseArray with tracked 3D positions)
     """
 
     def __init__(self):
@@ -20,50 +23,65 @@ class SortNode(Node):
 
         # Parameters
         self.declare_parameter('distance_threshold', 2.0)
-        self.declare_parameter('missed_threshold', 5)
-        self.declare_parameter('hits_threshold', 3)
+        self.declare_parameter('missed_threshold', 15)
+        self.declare_parameter('hits_threshold', 2)
 
         distance_threshold = self.get_parameter('distance_threshold').value
         missed_threshold = self.get_parameter('missed_threshold').value
         hits_threshold = self.get_parameter('hits_threshold').value
 
         self.tracker = SortTracker(distance_threshold, missed_threshold, hits_threshold)
+        self.feature_extractor = FeatureExtractor()
+        self.bridge = CvBridge()
+        self.latest_image = None
 
         self.pose_sub = self.create_subscription(
             PoseArray,
-            'human_poses_3d',
+            'human_poses_3d_global',
             self.pose_callback,
             10
         )
 
-        self.pose_pub = self.create_publisher(PoseArray, 'human_poses_3d_tracked', 10)
+        self.image_sub = self.create_subscription(
+            Image,
+            '/rgb_camera_frame_sensor/image_raw',
+            self.image_callback,
+            10
+        )
+
+        self.pose_pub = self.create_publisher(
+            PoseArray, 
+            'human_poses_3d_tracked_global', 
+            10
+        )
+
+
 
         self.get_logger().info('=' * 60)
         self.get_logger().info(f'SORT Node Ready!')
         self.get_logger().info(f'  Distance threshold: {distance_threshold}')
         self.get_logger().info(f'  Missed threshold: {missed_threshold}')
         self.get_logger().info(f'  Hits threshold: {hits_threshold}')
-        self.get_logger().info(f'  Subscribing to: /human_poses_3d')
-        self.get_logger().info(f'  Publishing to: /human_poses_3d_tracked')
+        self.get_logger().info(f'  Subscribing to: /human_poses_3d_global')
+        self.get_logger().info(f'  Subscribing to: /rgb_camera_frame_sensor/image_raw')
+        self.get_logger().info(f'  Publishing to: /human_poses_3d_tracked_global')
         self.get_logger().info('=' * 60)
 
-    
-    def pose_callback(self, msg):
-        """
-        Callback for the /human_poses_3d topic.
+    def image_callback(self, msg):
+        try:
+            self.latest_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as e:
+            self.get_logger().error(f"Failed to convert image: {e}")
+            self.latest_image = None
 
-        Args:
-            msg: PoseArray from person_relative_localizer
-                position.x
-                position.y 
-                position.z
-        """
-        
+
+    def pose_callback(self, msg):
         detections = []
         for pose in msg.poses:
             x = pose.position.x
             y = pose.position.y
-            detections.append((x, y)) 
+            confidence = pose.position.z
+            detections.append((x, y, confidence))
 
         confirmed_tracks = self.tracker.update(detections)
 
@@ -74,7 +92,8 @@ class SortNode(Node):
             pose = Pose()
             pose.position.x = float(track['position'][0])
             pose.position.y = float(track['position'][1])
-            pose.position.z = float(track['id'])
+            pose.position.z = float(track['confidence'])
+            pose.orientation.w = float(track['id'])
             tracked_msg.poses.append(pose)
 
         self.pose_pub.publish(tracked_msg)

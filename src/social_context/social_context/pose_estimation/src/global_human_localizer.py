@@ -84,8 +84,8 @@ class GlobalHumanLocalizer(Node):
                 transform = self.tf_buffer.lookup_transform(
                     self.map_frame,
                     self.robot_frame,
-                    # rclpy.time.Time(),
-                    timestamp,
+                    rclpy.time.Time(),
+                    #timestamp,
                     timeout=rclpy.duration.Duration(seconds=self.tf_timeout)
                 )
             except TransformException as ex:
@@ -101,6 +101,8 @@ class GlobalHumanLocalizer(Node):
             global_poses.header.frame_id = self.map_frame
 
             for local_pose in msg.poses:
+                confidence_level = local_pose.position.z
+
                 pose_stamped = PoseStamped()
                 pose_stamped.header.stamp = msg.header.stamp
                 pose_stamped.header.frame_id = self.robot_frame
@@ -110,6 +112,8 @@ class GlobalHumanLocalizer(Node):
                     pose_stamped,
                     transform
                 )
+
+                global_pose_stamped.pose.position.z = confidence_level
 
                 global_poses.poses.append(global_pose_stamped.pose)
 

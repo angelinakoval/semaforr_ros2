@@ -238,10 +238,12 @@ class PersonRelativeLocalizer(Node):
                 pose_3d = self.create_3d_pose_in_lidar_frame(lidar_angle, lidar_range)
 
                 if pose_3d is not None:
+                    pose_3d.position.z = confidence  # Store confidence in z for tracking
                     poses_3d.poses.append(pose_3d)
                     self.get_logger().info(
                         f'  ✓ Localized at ({pose_3d.position.x:.2f}, {pose_3d.position.y:.2f})m, '
                         f'range={lidar_range:.2f}m, angle={math.degrees(lidar_angle):.1f}°'
+                        f' (confidence={confidence:.3f})'
                     )
 
             self.pose_3d_pub.publish(poses_3d)

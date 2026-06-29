@@ -5,7 +5,7 @@ LIDAR_TOPIC = '/scan_raw'
 OPENPOSE_OUTPUT_TOPIC = 'human_poses'
 CAMERA_2D_POSE_DATA_TOPIC = 'human_poses'
 PERSON_RELATIVE_LOCALIZER_OUTPUT_TOPIC = 'human_poses_3d'
-SORT_TRACKER_OUTPUT_TOPIC = 'human_poses_3d_tracked'
+SORT_TRACKER_OUTPUT_TOPIC = 'human_poses_3d_tracked_global'
 
 # Timing parameters
 # MAX_SYNC_DELAY = 0.1
