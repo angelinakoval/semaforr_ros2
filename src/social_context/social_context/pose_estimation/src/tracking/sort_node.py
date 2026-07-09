@@ -1,10 +1,11 @@
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseArray, Pose
+from geometry_msgs.msg import PoseArray
 from .sort_tracker import SortTracker
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from .feature_extractor import FeatureExtractor
+from social_context_msgs.msg import TrackedPerson, TrackedPersonArray
 
 class SortNode(Node):
     """
@@ -50,7 +51,7 @@ class SortNode(Node):
         )
 
         self.pose_pub = self.create_publisher(
-            PoseArray, 
+            TrackedPersonArray, 
             'human_poses_3d_tracked_global', 
             10
         )
@@ -67,6 +68,7 @@ class SortNode(Node):
         self.get_logger().info(f'  Publishing to: /human_poses_3d_tracked_global')
         self.get_logger().info('=' * 60)
 
+
     def image_callback(self, msg):
         try:
             self.latest_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -81,20 +83,35 @@ class SortNode(Node):
             x = pose.position.x
             y = pose.position.y
             confidence = pose.position.z
-            detections.append((x, y, confidence))
+            orientation = (
+                pose.orientation.x,
+                pose.orientation.y,
+                pose.orientation.z,
+                pose.orientation.w
+            )
+            detections.append((x, y, confidence, orientation))
 
         confirmed_tracks = self.tracker.update(detections)
 
-        tracked_msg = PoseArray()
+        tracked_msg = TrackedPersonArray()
         tracked_msg.header = msg.header
 
         for track in confirmed_tracks:
-            pose = Pose()
-            pose.position.x = float(track['position'][0])
-            pose.position.y = float(track['position'][1])
-            pose.position.z = float(track['confidence'])
-            pose.orientation.w = float(track['id'])
-            tracked_msg.poses.append(pose)
+            person = TrackedPerson()
+            person.id = int(track['id'])
+            person.confidence = float(track['confidence'])
+            person.x = float(track['position'][0])
+            person.y = float(track['position'][1])
+
+            person.orientation_x = float(track['orientation'][0])
+            person.orientation_y = float(track['orientation'][1])
+            person.orientation_z = float(track['orientation'][2])
+            person.orientation_w = float(track['orientation'][3])
+
+            person.history_x = [float(p[0]) for p in track['history']]
+            person.history_y = [float(p[1]) for p in track['history']]
+
+            tracked_msg.people.append(person)
 
         self.pose_pub.publish(tracked_msg)
 

@@ -36,7 +36,9 @@ class SortTracker():
                     'id': track.id, 
                     'position': track.get_position(), 
                     'history': track.history,
-                    'confidence': track.confidence})
+                    'confidence': track.confidence,
+                    'orientation': track.orientation
+                    })
         return confirmed_tracks
 
 
@@ -54,8 +56,8 @@ class SortTracker():
             True if appearance features are needed
             False - no ambiguity, can match based on distance alone
         """
-        pos1 = np.array(item1[:2])
-        pos2 = np.array(item2[:2])
+        pos1 = np.array([item1[0], item1[1]])
+        pos2 = np.array([item2[0], item2[1]])
         distance = np.linalg.norm(pos1 - pos2)
         return distance < threshold
 
@@ -85,15 +87,13 @@ class SortTracker():
             for j in range(i+1, len(predicted_positions)):
                 if self.is_ambiguous(predicted_positions[i], predicted_positions[j], threshold):
                     for k in range(len(detections)):
-                        if self.is_ambiguous(predicted_positions[i], detections[k], threshold):
-                            ambiguous_detections.add(k)
-                        if self.is_ambiguous(predicted_positions[j], detections[k], threshold):
+                        if self.is_ambiguous(predicted_positions[i], detections[k], threshold) or self.is_ambiguous(predicted_positions[j], detections[k], threshold):
                             ambiguous_detections.add(k)
 
         return ambiguous_detections
     
 
-    def match_positions(self, predicted_positions, positions, confidences):
+    def match_positions(self, predicted_positions, positions, confidences, orientations):
         """
         Match predicted positions of existing trackers to new detections using the Hungarian algorithm
 
@@ -118,7 +118,9 @@ class SortTracker():
         # Update existing trackers or create new ones
         for i, j in zip(row_indices, col_indices):
             if cost_matrix[i, j] < self.distance_threshold:
-                self.trackers[i].update(positions[j], confidences[j], self.hits_threshold)
+                self.trackers[i].update(
+                    positions[j], confidences[j], 
+                    self.hits_threshold, orientations[j])
                 accepted_assignments.add(j)
             else:
                 self.trackers[i].mark_missed(self.missed_threshold)
@@ -146,6 +148,7 @@ class SortTracker():
 
         positions = [det[:2] for det in detections]
         confidences = [det[2] for det in detections]
+        orientations = [det[3] for det in detections]
 
         predicted_positions = []
         for track in self.trackers:
@@ -157,6 +160,7 @@ class SortTracker():
             for i, pos in enumerate(positions):
                 new_tracker = KalmanPersonTracker(pos)
                 new_tracker.confidence = confidences[i]
+                new_tracker.orientation = orientations[i]
                 self.trackers.append(new_tracker)
             return self.get_confirmed_tracks()
         
@@ -171,15 +175,16 @@ class SortTracker():
         ambiguous_detections = self.get_ambiguous_items(positions, predicted_positions)
 
         if len(ambiguous_detections) == 0:
-            accepted_assignments = self.match_positions(predicted_positions, positions, confidences)
+            accepted_assignments = self.match_positions(predicted_positions, positions, confidences, orientations)
         else:
-            accepted_assignments = self.match_positions(predicted_positions, positions, confidences)
+            accepted_assignments = self.match_positions(predicted_positions, positions, confidences, orientations)
 
         # Create new trackers for unmatched detections
         for j in range(len(detections)):
             if j not in accepted_assignments:
                 new_tracker = KalmanPersonTracker(positions[j])
                 new_tracker.confidence = confidences[j]
+                new_tracker.orientation = orientations[j]
                 self.trackers.append(new_tracker)
 
         # Remove deleted trackers

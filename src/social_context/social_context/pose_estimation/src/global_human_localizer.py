@@ -102,6 +102,10 @@ class GlobalHumanLocalizer(Node):
 
             for local_pose in msg.poses:
                 confidence_level = local_pose.position.z
+                ori_x = local_pose.orientation.x
+                ori_y = local_pose.orientation.y
+                ori_z = local_pose.orientation.z
+                ori_w = local_pose.orientation.w
 
                 pose_stamped = PoseStamped()
                 pose_stamped.header.stamp = msg.header.stamp
@@ -114,6 +118,10 @@ class GlobalHumanLocalizer(Node):
                 )
 
                 global_pose_stamped.pose.position.z = confidence_level
+                global_pose_stamped.pose.orientation.x = ori_x
+                global_pose_stamped.pose.orientation.y = ori_y
+                global_pose_stamped.pose.orientation.z = ori_z
+                global_pose_stamped.pose.orientation.w = ori_w
 
                 global_poses.poses.append(global_pose_stamped.pose)
 

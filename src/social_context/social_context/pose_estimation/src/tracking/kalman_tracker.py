@@ -66,6 +66,7 @@ class KalmanPersonTracker():
         self.state = 'TENTATIVE'  # Can be 'TENTATIVE', 'CONFIRMED' (3 hits for now), 'DELETED'
         self.confidence = 0.0
         self.appearance_feature = None 
+        self.orientation = (0.0, 0.0, 0.0, 1.0)  # Default orientation as a quaternion
 
 
     def update_appearance_feature(self, feature, ema_alpha=0.8):
@@ -99,7 +100,7 @@ class KalmanPersonTracker():
 
         return (predicted_x, predicted_y)
 
-    def update (self, new_position, confidence = 0.0, hits_threshold = 2):
+    def update (self, new_position, confidence = 0.0, hits_threshold = 2, orientation = None):
         """
         Update the Kalman Filter with a new position measurement
 
@@ -111,6 +112,10 @@ class KalmanPersonTracker():
         self.kf.R = np.eye(2) * 0.1* (1.0 - confidence) + np.eye(2)*1e-6 # Adjust measurement noise based on confidence
         self.kf.update(np.array([[new_position[0]], [new_position[1]]]))
         self.history.append(new_position)
+        if len(self.history) > 30:  # Keep only the last 30 positions
+            self.history.pop(0)
+
+
         self.missed = 0
         self.hits += 1
         self.confidence = confidence
@@ -118,6 +123,9 @@ class KalmanPersonTracker():
         # Threshold to confirm a track - if we have 3 hits, we consider it confirmed (COULD BE CHANGED)
         if self.state == 'TENTATIVE' and self.hits >= hits_threshold:
             self.state = 'CONFIRMED'
+        
+        if orientation is not None:
+            self.orientation = orientation
 
 
     def mark_missed(self, missed_threshold = 15):
