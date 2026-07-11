@@ -1,18 +1,19 @@
+#!/usr/bin/env python3
+
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseArray
 from .sort_tracker import SortTracker
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from .feature_extractor import FeatureExtractor
-from social_context_msgs.msg import TrackedPerson, TrackedPersonArray
+from social_context_msgs.msg import TrackedPerson, TrackedPersonArray, LocalizedPersonArray
 
 class SortNode(Node):
     """
     ROS2 node for SORT tracking.
 
-    Subscribes to: /human_poses_3d_global (PoseArray with 3D detections)
-    Publishes to: /tracked_human_poses_global (PoseArray with tracked 3D positions)
+    Subscribes to: /human_poses_3d_global (LocalizedPersonArray with 3D detections)
+    Publishes to: /tracked_human_poses_global (TrackedPersonArray with tracked 3D positions)
     """
 
     def __init__(self):
@@ -26,18 +27,20 @@ class SortNode(Node):
         self.declare_parameter('distance_threshold', 2.0)
         self.declare_parameter('missed_threshold', 15)
         self.declare_parameter('hits_threshold', 2)
+        self.declare_parameter('combined_cost_threshold', 0.8)
 
         distance_threshold = self.get_parameter('distance_threshold').value
         missed_threshold = self.get_parameter('missed_threshold').value
         hits_threshold = self.get_parameter('hits_threshold').value
+        combined_cost_threshold = self.get_parameter('combined_cost_threshold').value
 
-        self.tracker = SortTracker(distance_threshold, missed_threshold, hits_threshold)
+        self.tracker = SortTracker(distance_threshold, missed_threshold, hits_threshold, combined_cost_threshold)
         self.feature_extractor = FeatureExtractor()
         self.bridge = CvBridge()
         self.latest_image = None
 
         self.pose_sub = self.create_subscription(
-            PoseArray,
+            LocalizedPersonArray,
             'human_poses_3d_global',
             self.pose_callback,
             10
@@ -63,6 +66,7 @@ class SortNode(Node):
         self.get_logger().info(f'  Distance threshold: {distance_threshold}')
         self.get_logger().info(f'  Missed threshold: {missed_threshold}')
         self.get_logger().info(f'  Hits threshold: {hits_threshold}')
+        self.get_logger().info(f'  Combined cost threshold: {combined_cost_threshold}')
         self.get_logger().info(f'  Subscribing to: /human_poses_3d_global')
         self.get_logger().info(f'  Subscribing to: /rgb_camera_frame_sensor/image_raw')
         self.get_logger().info(f'  Publishing to: /human_poses_3d_tracked_global')
@@ -79,19 +83,21 @@ class SortNode(Node):
 
     def pose_callback(self, msg):
         detections = []
-        for pose in msg.poses:
-            x = pose.position.x
-            y = pose.position.y
-            confidence = pose.position.z
+        for person in msg.people:
+            x = person.x
+            y = person.y
+            confidence = person.confidence
             orientation = (
-                pose.orientation.x,
-                pose.orientation.y,
-                pose.orientation.z,
-                pose.orientation.w
+                person.orientation_x,
+                person.orientation_y,
+                person.orientation_z,
+                person.orientation_w
             )
-            detections.append((x, y, confidence, orientation))
+            pixel_x = person.pixel_x
+            pixel_y = person.pixel_y
+            detections.append((x, y, confidence, orientation, pixel_x, pixel_y))
 
-        confirmed_tracks = self.tracker.update(detections)
+        confirmed_tracks = self.tracker.update(detections, self.latest_image, self.feature_extractor)
 
         tracked_msg = TrackedPersonArray()
         tracked_msg.header = msg.header

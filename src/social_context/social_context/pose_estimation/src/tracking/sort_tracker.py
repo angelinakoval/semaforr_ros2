@@ -7,7 +7,7 @@ from scipy.optimize import linear_sum_assignment
 from .kalman_tracker import KalmanPersonTracker
 
 class SortTracker():
-    def __init__(self, distance_threshold = 2.0, missed_threshold = 15, hits_threshold = 2):
+    def __init__(self, distance_threshold = 2.0, missed_threshold = 15, hits_threshold = 2, combined_cost_threshold = 0.8):
         """
         Initialize the SORT tracker
 
@@ -19,6 +19,7 @@ class SortTracker():
         self.distance_threshold = distance_threshold
         self.missed_threshold = missed_threshold
         self.hits_threshold = hits_threshold
+        self.combined_cost_threshold = combined_cost_threshold
         self.frame_count = 0
 
 
@@ -133,22 +134,80 @@ class SortTracker():
         return accepted_assignments
     
 
-    def match_appearance(self, predicted_positions, positions, confidences, ambiguous_detections, features):
-        pass
+    def match_appearance(self, predicted_positions, positions, confidences, orientations, ambiguous_detections, pixel_positions, image, feature_extractor):
+        """
+        Match predicted positions of existing trackers to new detections using appearance features for ambiguous cases
+
+        Args:
+            predicted_positions: list of (x, y) from existing trackers
+            positions: list of (x, y) from new detections
+            confidences: list of confidence values for the new detections
+            orientations: list of orientation values for the new detections
+            ambiguous_detections: set of indices of detections that are ambiguous
+            pixel_positions: list of (pixel_x, pixel_y) for the new detections
+            image: latest camera image (numpy array) for appearance feature extraction
+            feature_extractor: instance of FeatureExtractor for appearance feature extraction
+
+        Returns:
+            accepted_assignments: set of indices of detections that were matched to existing trackers
+        """
+        detection_features = [None] * len(positions)
+        if image is not None and feature_extractor is not None:
+            for j in ambiguous_detections:
+                px, py = pixel_positions[j]
+                detection_features[j] = feature_extractor.extract_features(image, px, py)
+
+        cost_matrix = np.zeros((len(predicted_positions), len(positions)))
+        for i, pred in enumerate(predicted_positions):
+            for j, pos in enumerate(positions):
+                distance_cost = np.linalg.norm(np.array(pred) - np.array(pos))
+                distance_cost_normalized = min(distance_cost / self.distance_threshold, 1.0) # Normalize distance cost, so you can combine it with appearance cost
+                if j in ambiguous_detections and detection_features[j] is not None and self.trackers[i].appearance_feature is not None:
+                    similarity = feature_extractor.compute_similarity(self.trackers[i].appearance_feature, detection_features[j])
+                    appearance_cost = 1 - similarity
+                    cost_matrix[i, j] = 0.7*distance_cost_normalized + 0.3*appearance_cost
+                else:
+                    #No ambiguity, use distance cost only
+                    cost_matrix[i, j] = distance_cost_normalized
+
+        row_indices, col_indices = linear_sum_assignment(cost_matrix)
+
+        accepted_assignments = set()
+
+        for i, j in zip(row_indices, col_indices):
+            if cost_matrix[i, j] < self.combined_cost_threshold:
+                self.trackers[i].update(
+                    positions[j], confidences[j], 
+                    self.hits_threshold, orientations[j])
+                if detection_features[j] is not None:
+                    self.trackers[i].update_appearance_feature(detection_features[j])
+                accepted_assignments.add(j)
+            else:
+                self.trackers[i].mark_missed(self.missed_threshold)
+        
+        for i in range(len(self.trackers)):
+            if i not in row_indices:
+                self.trackers[i].mark_missed(self.missed_threshold)
+
+        return accepted_assignments
+        
     
 
-    def update(self, detections):
+    def update(self, detections, image = None, feature_extractor = None):
         """
         Update the tracker with new detections.
 
         Args:
             detections: list of (x,y,confidence) from /human_poses_3d
+            image: latest camera image (numpy array) for appearance feature extraction
+            feature_extractor: instance of FeatureExtractor for appearance feature extraction
         """
         self.frame_count += 1
 
         positions = [det[:2] for det in detections]
         confidences = [det[2] for det in detections]
         orientations = [det[3] for det in detections]
+        pixel_positions = [det[4:6] for det in detections]
 
         predicted_positions = []
         for track in self.trackers:
@@ -177,7 +236,7 @@ class SortTracker():
         if len(ambiguous_detections) == 0:
             accepted_assignments = self.match_positions(predicted_positions, positions, confidences, orientations)
         else:
-            accepted_assignments = self.match_positions(predicted_positions, positions, confidences, orientations)
+            accepted_assignments = self.match_appearance(predicted_positions, positions, confidences, orientations, ambiguous_detections, pixel_positions, image, feature_extractor)
 
         # Create new trackers for unmatched detections
         for j in range(len(detections)):

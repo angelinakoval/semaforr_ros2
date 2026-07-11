@@ -14,6 +14,8 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TrackedPerson.msg"
   "msg/TrackedPersonArray.msg"
+  "msg/LocalizedPerson.msg"
+  "msg/LocalizedPersonArray.msg"
   DEPENDENCIES std_msgs geometry_msgs
   )
 
