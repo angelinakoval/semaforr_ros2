@@ -94,7 +94,7 @@ class SortTracker():
         return ambiguous_detections
     
 
-    def match_positions(self, predicted_positions, positions, confidences, orientations):
+    def match_positions(self, predicted_positions, positions, confidences, orientations, pixel_positions, image, feature_extractor):
         """
         Match predicted positions of existing trackers to new detections using the Hungarian algorithm
 
@@ -102,6 +102,10 @@ class SortTracker():
             predicted_positions: list of (x, y) from existing trackers
             positions: list of (x, y) from new detections
             confidences: list of confidence values for the new detections
+            orientations: list of orientation values for the new detections
+            pixel_positions: list of (pixel_x, pixel_y) for the new detections
+            image: latest camera image (numpy array) for appearance feature extraction
+            feature_extractor: instance of FeatureExtractor for appearance feature extraction
 
         Returns:
             accepted_assignments: set of indices of detections that were matched to existing trackers
@@ -123,6 +127,15 @@ class SortTracker():
                     positions[j], confidences[j], 
                     self.hits_threshold, orientations[j])
                 accepted_assignments.add(j)
+
+                if (self.trackers[i].appearance_feature is None and image is not None and feature_extractor is not None):
+                    # Extract appearance feature for the tracker if it doesn't have one yet
+                    px, py = pixel_positions[j]
+                    feature = feature_extractor.extract_features(image, px, py)
+                    if feature is not None:
+                        self.trackers[i].update_appearance_feature(feature)
+
+
             else:
                 self.trackers[i].mark_missed(self.missed_threshold)
 
@@ -151,17 +164,29 @@ class SortTracker():
         Returns:
             accepted_assignments: set of indices of detections that were matched to existing trackers
         """
+
         detection_features = [None] * len(positions)
         if image is not None and feature_extractor is not None:
             for j in ambiguous_detections:
                 px, py = pixel_positions[j]
                 detection_features[j] = feature_extractor.extract_features(image, px, py)
 
+
+        """
+        Cost_matrix layout:
+        Rows: Trackers (predicted positions)
+        Columns: Detections (new positions)
+
+                    detection_0     detection_1     detection_2
+        tracker_0
+        tracker_1
+        tracker_2
+        """
         cost_matrix = np.zeros((len(predicted_positions), len(positions)))
         for i, pred in enumerate(predicted_positions):
             for j, pos in enumerate(positions):
                 distance_cost = np.linalg.norm(np.array(pred) - np.array(pos))
-                distance_cost_normalized = min(distance_cost / self.distance_threshold, 1.0) # Normalize distance cost, so you can combine it with appearance cost
+                distance_cost_normalized = min(distance_cost / self.distance_threshold, 1.0) # Normalize distance cost, so it can be combined with with appearance cost
                 if j in ambiguous_detections and detection_features[j] is not None and self.trackers[i].appearance_feature is not None:
                     similarity = feature_extractor.compute_similarity(self.trackers[i].appearance_feature, detection_features[j])
                     appearance_cost = 1 - similarity
@@ -181,6 +206,13 @@ class SortTracker():
                     self.hits_threshold, orientations[j])
                 if detection_features[j] is not None:
                     self.trackers[i].update_appearance_feature(detection_features[j])
+
+                elif (self.trackers[i].appearance_feature is None and image is not None and feature_extractor is not None):
+                    # Extract appearance feature for the tracker if it doesn't have one yet
+                    px, py = pixel_positions[j]
+                    feature = feature_extractor.extract_features(image, px, py)
+                    if feature is not None:
+                        self.trackers[i].update_appearance_feature(feature)
                 accepted_assignments.add(j)
             else:
                 self.trackers[i].mark_missed(self.missed_threshold)
@@ -220,6 +252,11 @@ class SortTracker():
                 new_tracker = KalmanPersonTracker(pos)
                 new_tracker.confidence = confidences[i]
                 new_tracker.orientation = orientations[i]
+                if image is not None and feature_extractor is not None:
+                    px, py = pixel_positions[i]
+                    feature = feature_extractor.extract_features(image, px, py)
+                    if feature is not None:
+                        new_tracker.update_appearance_feature(feature)
                 self.trackers.append(new_tracker)
             return self.get_confirmed_tracks()
         
@@ -234,7 +271,7 @@ class SortTracker():
         ambiguous_detections = self.get_ambiguous_items(positions, predicted_positions)
 
         if len(ambiguous_detections) == 0:
-            accepted_assignments = self.match_positions(predicted_positions, positions, confidences, orientations)
+            accepted_assignments = self.match_positions(predicted_positions, positions, confidences, orientations, pixel_positions, image, feature_extractor)
         else:
             accepted_assignments = self.match_appearance(predicted_positions, positions, confidences, orientations, ambiguous_detections, pixel_positions, image, feature_extractor)
 
@@ -244,6 +281,11 @@ class SortTracker():
                 new_tracker = KalmanPersonTracker(positions[j])
                 new_tracker.confidence = confidences[j]
                 new_tracker.orientation = orientations[j]
+                if image is not None and feature_extractor is not None:
+                    px, py = pixel_positions[j]
+                    feature = feature_extractor.extract_features(image, px, py)
+                    if feature is not None:
+                        new_tracker.update_appearance_feature(feature)
                 self.trackers.append(new_tracker)
 
         # Remove deleted trackers

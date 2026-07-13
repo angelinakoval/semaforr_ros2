@@ -81,8 +81,8 @@ class KalmanPersonTracker():
             return 
 
         if self.appearance_feature is None:
-            self.appearance_feature = feature
-        else:
+            self.appearance_feature = feature #first time -> initialize
+        else: #update using EMA
             self.appearance_feature = ema_alpha * self.appearance_feature + (1 - ema_alpha) * feature
 
 
