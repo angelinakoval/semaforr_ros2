@@ -26,15 +26,23 @@ class SortNode(Node):
         # Parameters
         self.declare_parameter('distance_threshold', 2.0)
         self.declare_parameter('missed_threshold', 15)
+        self.declare_parameter('tentative_missed_threshold', 7)
         self.declare_parameter('hits_threshold', 2)
         self.declare_parameter('combined_cost_threshold', 0.8)
 
         distance_threshold = self.get_parameter('distance_threshold').value
         missed_threshold = self.get_parameter('missed_threshold').value
+        tentative_missed_threshold = self.get_parameter('tentative_missed_threshold').value
         hits_threshold = self.get_parameter('hits_threshold').value
         combined_cost_threshold = self.get_parameter('combined_cost_threshold').value
 
-        self.tracker = SortTracker(distance_threshold, missed_threshold, hits_threshold, combined_cost_threshold)
+        self.tracker = SortTracker(
+            distance_threshold = distance_threshold, 
+            missed_threshold = missed_threshold, 
+            tentative_missed_threshold = tentative_missed_threshold, 
+            hits_threshold = hits_threshold, 
+            combined_cost_threshold = combined_cost_threshold)
+
         self.feature_extractor = FeatureExtractor()
         self.bridge = CvBridge()
         self.latest_image = None
@@ -65,6 +73,7 @@ class SortNode(Node):
         self.get_logger().info(f'SORT Node Ready!')
         self.get_logger().info(f'  Distance threshold: {distance_threshold}')
         self.get_logger().info(f'  Missed threshold: {missed_threshold}')
+        self.get_logger().info(f'  Tentative missed threshold: {tentative_missed_threshold}')
         self.get_logger().info(f'  Hits threshold: {hits_threshold}')
         self.get_logger().info(f'  Combined cost threshold: {combined_cost_threshold}')
         self.get_logger().info(f'  Subscribing to: /human_poses_3d_global')
@@ -82,6 +91,7 @@ class SortNode(Node):
 
 
     def pose_callback(self, msg):
+        timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         detections = []
         for person in msg.people:
             x = person.x
@@ -97,7 +107,7 @@ class SortNode(Node):
             pixel_y = person.pixel_y
             detections.append((x, y, confidence, orientation, pixel_x, pixel_y))
 
-        confirmed_tracks = self.tracker.update(detections, self.latest_image, self.feature_extractor)
+        confirmed_tracks = self.tracker.update(detections, self.latest_image, self.feature_extractor, timestamp)
 
         tracked_msg = TrackedPersonArray()
         tracked_msg.header = msg.header

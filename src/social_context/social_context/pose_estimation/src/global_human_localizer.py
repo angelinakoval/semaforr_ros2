@@ -85,8 +85,8 @@ class GlobalHumanLocalizer(Node):
                 transform = self.tf_buffer.lookup_transform(
                     self.map_frame,
                     self.robot_frame,
-                    #rclpy.time.Time(),
-                    timestamp,
+                    rclpy.time.Time(),
+                    #timestamp,
                     timeout=rclpy.duration.Duration(seconds=self.tf_timeout)
                 )
             except TransformException as ex:

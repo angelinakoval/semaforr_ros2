@@ -7,17 +7,19 @@ from scipy.optimize import linear_sum_assignment
 from .kalman_tracker import KalmanPersonTracker
 
 class SortTracker():
-    def __init__(self, distance_threshold = 2.0, missed_threshold = 15, hits_threshold = 2, combined_cost_threshold = 0.8):
+    def __init__(self, distance_threshold = 2.0, missed_threshold = 15, tentative_missed_threshold = 7, hits_threshold = 3, combined_cost_threshold = 0.8):
         """
         Initialize the SORT tracker
 
         Args: distance_threshold: Maximum distance to associate detections to existing trackers
               missed_threshold: Number of consecutive misses before a tracker is deleted
+              tentative_missed_threshold: Number of consecutive misses before a tentative tracker is deleted
               hits_threshold: Number of consecutive hits before a tracker is confirmed
         """
         self.trackers = []
         self.distance_threshold = distance_threshold
         self.missed_threshold = missed_threshold
+        self.tentative_missed_threshold = tentative_missed_threshold
         self.hits_threshold = hits_threshold
         self.combined_cost_threshold = combined_cost_threshold
         self.frame_count = 0
@@ -137,12 +139,12 @@ class SortTracker():
 
 
             else:
-                self.trackers[i].mark_missed(self.missed_threshold)
+                self.trackers[i].mark_missed(self.missed_threshold, self.tentative_missed_threshold)
 
         # mark unmatched trackers as missed
         for i in range(len(self.trackers)):
             if i not in row_indices:
-                self.trackers[i].mark_missed(self.missed_threshold)
+                self.trackers[i].mark_missed(self.missed_threshold, self.tentative_missed_threshold)
         
         return accepted_assignments
     
@@ -215,17 +217,17 @@ class SortTracker():
                         self.trackers[i].update_appearance_feature(feature)
                 accepted_assignments.add(j)
             else:
-                self.trackers[i].mark_missed(self.missed_threshold)
+                self.trackers[i].mark_missed(self.missed_threshold, self.tentative_missed_threshold)
         
         for i in range(len(self.trackers)):
             if i not in row_indices:
-                self.trackers[i].mark_missed(self.missed_threshold)
+                self.trackers[i].mark_missed(self.missed_threshold, self.tentative_missed_threshold)
 
         return accepted_assignments
         
     
 
-    def update(self, detections, image = None, feature_extractor = None):
+    def update(self, detections, image = None, feature_extractor = None, timestamp = None):
         """
         Update the tracker with new detections.
 
@@ -243,13 +245,13 @@ class SortTracker():
 
         predicted_positions = []
         for track in self.trackers:
-            predicted_pos = track.predict()
+            predicted_pos = track.predict(timestamp)
             predicted_positions.append(predicted_pos)
         
         #No existing trackers, create new ones for all detections
         if len(self.trackers) == 0:
             for i, pos in enumerate(positions):
-                new_tracker = KalmanPersonTracker(pos)
+                new_tracker = KalmanPersonTracker(pos, timestamp)
                 new_tracker.confidence = confidences[i]
                 new_tracker.orientation = orientations[i]
                 if image is not None and feature_extractor is not None:
@@ -263,7 +265,7 @@ class SortTracker():
         # No detections, mark all trackers as missed
         if len(detections) == 0:
             for track in self.trackers:
-                track.mark_missed(self.missed_threshold)
+                track.mark_missed(self.missed_threshold, self.tentative_missed_threshold)
             self.trackers = [t for t in self.trackers if t.state != 'DELETED']
             return self.get_confirmed_tracks()
 
@@ -278,7 +280,7 @@ class SortTracker():
         # Create new trackers for unmatched detections
         for j in range(len(detections)):
             if j not in accepted_assignments:
-                new_tracker = KalmanPersonTracker(positions[j])
+                new_tracker = KalmanPersonTracker(positions[j], timestamp)
                 new_tracker.confidence = confidences[j]
                 new_tracker.orientation = orientations[j]
                 if image is not None and feature_extractor is not None:

@@ -8,17 +8,20 @@ Needs position and velocity - [x, y, vx, vy]
 
 import numpy as np
 from filterpy.kalman import KalmanFilter
+from filterpy.common import Q_discrete_white_noise
+import time
 
 class KalmanPersonTracker():
     count = 0
 
-    def __init__(self, initial_position):
+    def __init__(self, initial_position, timestamp=None):
         """
         New person is detected
         Set up Kalman Filter for this person and 
 
         Args: 
             initial-position: (x, y)
+            timestamp: Time of detection
         """
 
         self.kf = KalmanFilter(dim_x=4, dim_z=2)
@@ -32,10 +35,7 @@ class KalmanPersonTracker():
         # next_y  = y + vy
         # next_vx = vx
         # next_vy = vy
-        self.kf.F = np.array([[1., 0., 1., 0.],
-                                [0., 1., 0., 1.],
-                                [0., 0., 1., 0.],
-                                [0., 0., 0., 1.]])
+        self.kf.F = np.eye(4)
         
         # Measurement matrix - we only measure position (x, y)
         # measured_x = x
@@ -53,7 +53,14 @@ class KalmanPersonTracker():
         
         # Initial state covariance
         self.kf.P = np.eye(4) * 1.0
-        
+
+        if timestamp is not None:
+            self.last_predict_time = timestamp
+        else:
+            self.last_predict_time = time.time()  # Use current time if no timestamp is provided
+        self.q_scale = 0.5
+        self.max_dt = 2.0
+        self.min_dt = 1e-3
     
         self.initial_position = initial_position
 
@@ -86,7 +93,7 @@ class KalmanPersonTracker():
             self.appearance_feature = ema_alpha * self.appearance_feature + (1 - ema_alpha) * feature
 
 
-    def predict(self):
+    def predict(self, timestamp=None):
         """
         Predict the next position of the person based on the Kalman Filter
 
@@ -94,13 +101,29 @@ class KalmanPersonTracker():
             predicted_position: (x, y)
         """
 
+        if timestamp is not None:
+            now = timestamp
+        else:
+            now = time.time()
+        df = now - self.last_predict_time
+        self.last_predict_time = now
+        df = max(self.min_dt, min(df, self.max_dt))  # Clamp df to avoid extreme values
+
+        self.kf.F = np.array([[1., 0., df, 0.],
+                              [0., 1., 0., df],
+                              [0., 0., 1., 0.],
+                              [0., 0., 0., 1.]])
+
+        self.kf.Q = Q_discrete_white_noise(dim=2, dt=df, var=self.q_scale, block_size=2, order_by_dim=False)
+
+
         self.kf.predict()
         predicted_x = self.kf.x[0, 0]
         predicted_y = self.kf.x[1, 0]
 
         return (predicted_x, predicted_y)
 
-    def update (self, new_position, confidence = 0.0, hits_threshold = 2, orientation = None):
+    def update (self, new_position, confidence = 0.0, hits_threshold = 3, orientation = None):
         """
         Update the Kalman Filter with a new position measurement
 
@@ -128,16 +151,17 @@ class KalmanPersonTracker():
             self.orientation = orientation
 
 
-    def mark_missed(self, missed_threshold = 15):
+    def mark_missed(self, missed_threshold = 15, tentative_missed_threshold = 7):
         """
         Mark the person as missed
 
         Args:
             missed_threshold: Number of consecutive misses before a tracker is deleted
+            tentative_missed_threshold: Number of consecutive misses before a tentative tracker is deleted
         """
         self.missed += 1
         self.hits = 0  # reset hits if we miss a detection
-        if self.state == 'TENTATIVE' and self.missed >= 3:
+        if self.state == 'TENTATIVE' and self.missed >= tentative_missed_threshold:
             self.state = 'DELETED'
         elif self.missed >= missed_threshold:
             self.state = 'DELETED'  
