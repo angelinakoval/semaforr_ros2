@@ -72,7 +72,7 @@ class KalmanPersonTracker():
         self.hits = 1
         self.state = 'TENTATIVE'  # Can be 'TENTATIVE', 'CONFIRMED' (3 hits for now), 'DELETED'
         self.confidence = 0.0
-        self.appearance_feature = None 
+        self.appearance_feature = None
         self.orientation = (0.0, 0.0, 0.0, 1.0)  # Default orientation as a quaternion
 
 
@@ -164,8 +164,7 @@ class KalmanPersonTracker():
         if self.state == 'TENTATIVE' and self.missed >= tentative_missed_threshold:
             self.state = 'DELETED'
         elif self.missed >= missed_threshold:
-            self.state = 'DELETED'  
-
+            self.state = 'DELETED'
 
     def get_position(self):
         """

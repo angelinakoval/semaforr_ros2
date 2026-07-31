@@ -7,7 +7,7 @@ from scipy.optimize import linear_sum_assignment
 from .kalman_tracker import KalmanPersonTracker
 
 class SortTracker():
-    def __init__(self, distance_threshold = 2.0, missed_threshold = 15, tentative_missed_threshold = 7, hits_threshold = 3, combined_cost_threshold = 0.8):
+    def __init__(self, distance_threshold = 2.0, missed_threshold = 15, tentative_missed_threshold = 7, hits_threshold = 3, combined_cost_threshold = 0.8, missed_grace_multiplier = 1.35):
         """
         Initialize the SORT tracker
 
@@ -15,6 +15,8 @@ class SortTracker():
               missed_threshold: Number of consecutive misses before a tracker is deleted
               tentative_missed_threshold: Number of consecutive misses before a tentative tracker is deleted
               hits_threshold: Number of consecutive hits before a tracker is confirmed
+              combined_cost_threshold: Maximum combined cost (distance + appearance) to associate detections to existing trackers
+              missed_grace_multiplier: Widens the match radius by this factor for a tracker that has missed at least one detection
         """
         self.trackers = []
         self.distance_threshold = distance_threshold
@@ -22,6 +24,7 @@ class SortTracker():
         self.tentative_missed_threshold = tentative_missed_threshold
         self.hits_threshold = hits_threshold
         self.combined_cost_threshold = combined_cost_threshold
+        self.missed_grace_multiplier = missed_grace_multiplier
         self.frame_count = 0
 
 
@@ -45,7 +48,23 @@ class SortTracker():
         return confirmed_tracks
 
 
-    def is_ambiguous(self, item1, item2, threshold=1.5):
+    def match_radius(self, tracker_index, threshold=None):
+        """
+        Effective match radius for a given tracker, widened once it's missed at
+        least one detection
+
+        Args:
+            tracker_index: index into self.trackers
+            threshold: base radius to widen. Defaults to self.distance_threshold.
+        """
+        if threshold is None:
+            threshold = self.distance_threshold
+        if self.trackers[tracker_index].missed >= 1:
+            return threshold * self.missed_grace_multiplier
+        return threshold
+
+
+    def is_ambiguous(self, item1, item2, threshold=None):
         """
         Helper function
         Check if two detections or track predictions are close enough to cause matching confusion
@@ -53,30 +72,38 @@ class SortTracker():
         Args:
             item1 (detection or prediction): (x, y)
             item2 (detection or prediction): (x, y)
-            threshold: distance below which matching becomes ambiguous
+            threshold: distance below which matching becomes ambiguous.
+                Defaults to self.distance_threshold, so anything close enough
+                to be a plausible match candidate is also close enough to be
+                treated as ambiguous.
 
         Returns:
             True if appearance features are needed
             False - no ambiguity, can match based on distance alone
         """
+        if threshold is None:
+            threshold = self.distance_threshold
         pos1 = np.array([item1[0], item1[1]])
         pos2 = np.array([item2[0], item2[1]])
         distance = np.linalg.norm(pos1 - pos2)
         return distance < threshold
 
 
-    def get_ambiguous_items(self, detections, predicted_positions, threshold=1.5):
+    def get_ambiguous_items(self, detections, predicted_positions, threshold=None):
         """
         Get detections that are close enough to cause matching confusion
 
         Args:
             detections: list of (x, y)
             predicted_positions: list of (x, y)
-            threshold: distance below which matching becomes ambiguous
+            threshold: distance below which matching becomes ambiguous.
+                Defaults to self.distance_threshold.
 
         Returns:
             Set of detection indices for ambiguous pairs
         """
+        if threshold is None:
+            threshold = self.distance_threshold
         ambiguous_detections = set()
 
         for i in range (len(detections)):
@@ -92,6 +119,14 @@ class SortTracker():
                     for k in range(len(detections)):
                         if self.is_ambiguous(predicted_positions[i], detections[k], threshold) or self.is_ambiguous(predicted_positions[j], detections[k], threshold):
                             ambiguous_detections.add(k)
+
+        
+        # Adds detections that are near the predicted positions of trackers that have already missed a detection
+        for i in range(len(predicted_positions)):
+            if self.trackers[i].missed > 0:
+                for k in range(len(detections)):
+                    if self.is_ambiguous(predicted_positions[i], detections[k], threshold):
+                        ambiguous_detections.add(k)
 
         return ambiguous_detections
     
@@ -124,7 +159,7 @@ class SortTracker():
 
         # Update existing trackers or create new ones
         for i, j in zip(row_indices, col_indices):
-            if cost_matrix[i, j] < self.distance_threshold:
+            if cost_matrix[i, j] < self.match_radius(i):
                 self.trackers[i].update(
                     positions[j], confidences[j], 
                     self.hits_threshold, orientations[j])
@@ -188,7 +223,7 @@ class SortTracker():
         for i, pred in enumerate(predicted_positions):
             for j, pos in enumerate(positions):
                 distance_cost = np.linalg.norm(np.array(pred) - np.array(pos))
-                distance_cost_normalized = min(distance_cost / self.distance_threshold, 1.0) # Normalize distance cost, so it can be combined with with appearance cost
+                distance_cost_normalized = min(distance_cost / self.match_radius(i), 1.0) # Normalize distance cost, so it can be combined with with appearance cost
                 if j in ambiguous_detections and detection_features[j] is not None and self.trackers[i].appearance_feature is not None:
                     similarity = feature_extractor.compute_similarity(self.trackers[i].appearance_feature, detection_features[j])
                     appearance_cost = 1 - similarity
@@ -224,9 +259,7 @@ class SortTracker():
                 self.trackers[i].mark_missed(self.missed_threshold, self.tentative_missed_threshold)
 
         return accepted_assignments
-        
     
-
     def update(self, detections, image = None, feature_extractor = None, timestamp = None):
         """
         Update the tracker with new detections.
@@ -259,6 +292,7 @@ class SortTracker():
                     feature = feature_extractor.extract_features(image, px, py)
                     if feature is not None:
                         new_tracker.update_appearance_feature(feature)
+
                 self.trackers.append(new_tracker)
             return self.get_confirmed_tracks()
         
@@ -271,6 +305,13 @@ class SortTracker():
 
         
         ambiguous_detections = self.get_ambiguous_items(positions, predicted_positions)
+
+        tracker_ids = [t.id for t in self.trackers]
+        tracker_missed = [t.missed for t in self.trackers]
+        print(f"[MATCH] t={timestamp} trackers={tracker_ids} missed={tracker_missed} "
+              f"predicted={predicted_positions} "
+              f"detections={positions} ambiguous_detections={ambiguous_detections} "
+              f"branch={'match_appearance' if ambiguous_detections else 'match_positions'}")
 
         if len(ambiguous_detections) == 0:
             accepted_assignments = self.match_positions(predicted_positions, positions, confidences, orientations, pixel_positions, image, feature_extractor)
@@ -292,6 +333,5 @@ class SortTracker():
 
         # Remove deleted trackers
         self.trackers = [t for t in self.trackers if t.state != 'DELETED']
-
         return self.get_confirmed_tracks()
     
