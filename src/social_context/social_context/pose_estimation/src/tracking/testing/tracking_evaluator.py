@@ -71,11 +71,6 @@ class TrackingEvaluator(Node):
         if len(msg.people) == 0:
             return
 
-        # Use the detection's own header stamp, not wall-clock time.time().
-        # sort_node.py copies the source detection's header onto this message
-        # (tracked_msg.header = msg.header), which is the same clock basis
-        # sort_tracker.py's timestamp/t= values use -- so logging it here lets
-        # this CSV be joined directly against sort_tracker's [MATCH] logs.
         msg_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
         gt_ids = list(self.latest_ground_truth.keys())
@@ -85,14 +80,6 @@ class TrackingEvaluator(Node):
         claimed_trackers = set()
         unresolved_gt_ids = []
 
-        # Step 1: keep each gt person's current tracker if it's still around
-        # and still a plausible match -- this is what makes matching
-        # identity-preserving instead of a fresh nearest-neighbor solve.
-        # A tracker already claimed by an earlier gt person this frame can't
-        # also be sticky-retained by another -- without this, two gt people
-        # whose gt_to_tracker_id happened to independently point at the same
-        # tracker (from two separate past assignments) would both keep it
-        # simultaneously, silently misattributing one of them.
         for gt_id in gt_ids:
             prev_tracker_id = self.gt_to_tracker_id.get(gt_id)
             if prev_tracker_id is not None and prev_tracker_id in tracker_positions and prev_tracker_id not in claimed_trackers:
@@ -105,10 +92,6 @@ class TrackingEvaluator(Node):
                     continue
             unresolved_gt_ids.append(gt_id)
 
-        # Step 2: only gt people whose current tracker is gone or now out of
-        # range get re-matched, via Hungarian assignment against whatever
-        # trackers aren't already claimed by step 1. Only this step can
-        # produce a genuine ID switch.
         remaining_tracker_ids = [tid for tid in tracker_positions if tid not in claimed_trackers]
         if unresolved_gt_ids and remaining_tracker_ids:
             cost_matrix = np.zeros((len(unresolved_gt_ids), len(remaining_tracker_ids)))
