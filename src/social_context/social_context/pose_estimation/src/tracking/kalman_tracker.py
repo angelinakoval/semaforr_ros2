@@ -7,9 +7,16 @@ Needs position and velocity - [x, y, vx, vy]
 """
 
 import numpy as np
+import math
+from collections import deque
 from filterpy.kalman import KalmanFilter
 from filterpy.common import Q_discrete_white_noise
 import time
+
+
+ORIENTATION_MEDIAN_WINDOW = 7
+FLIP_SUSPECT_THRESHOLD = math.radians(130)
+MIN_SPEED_FOR_VELOCITY_HEADING = 0.2
 
 class KalmanPersonTracker():
     count = 0
@@ -74,6 +81,7 @@ class KalmanPersonTracker():
         self.confidence = 0.0
         self.appearance_feature = None
         self.orientation = (0.0, 0.0, 0.0, 1.0)  # Default orientation as a quaternion
+        self._orientation_yaw_history = deque(maxlen=ORIENTATION_MEDIAN_WINDOW)
 
 
     def update_appearance_feature(self, feature, ema_alpha=0.8):
@@ -148,7 +156,80 @@ class KalmanPersonTracker():
             self.state = 'CONFIRMED'
         
         if orientation is not None:
-            self.orientation = orientation
+            self.orientation = self._filter_orientation(orientation)
+
+    def _filter_orientation(self, orientation):
+        """
+        Filter the orientation using a circular median filter to reduce noise and sudden jumps
+
+        Args:
+            orientation: Quaternion (x, y, z, w)
+        
+        Returns:
+            Filtered orientation as a quaternion (x, y, z, w)
+        """
+        _, _, oz, ow = orientation
+        raw_yaw = 2.0 * math.atan2(oz, ow)
+        raw_yaw = self._disambiguate_flip(raw_yaw)
+        self._orientation_yaw_history.append(raw_yaw)
+        filtered_yaw = self._circular_median(self._orientation_yaw_history)
+        return (0.0, 0.0, math.sin(filtered_yaw / 2.0), math.cos(filtered_yaw / 2.0))
+
+    def _disambiguate_flip(self, raw_yaw):
+        """
+        Disambiguate a potential shoulder-labeling flip in the yaw measurement
+
+        Args:
+            raw_yaw: Raw yaw angle in radians from the current orientation measurement
+
+        Returns:
+            Disambiguated yaw angle in radians
+        """
+        _, _, prev_oz, prev_ow = self.orientation
+        prev_yaw = 2.0 * math.atan2(prev_oz, prev_ow)
+
+        if abs(self._angle_diff(raw_yaw, prev_yaw)) < FLIP_SUSPECT_THRESHOLD:
+            return raw_yaw  # not a suspected flip, nothing to disambiguate
+
+        vx, vy = self.kf.x[2, 0], self.kf.x[3, 0]
+        speed = math.hypot(vx, vy)
+        if speed < MIN_SPEED_FOR_VELOCITY_HEADING:
+            return raw_yaw  # not moving fast enough to trust a velocity heading
+
+        velocity_heading = math.atan2(vy, vx)
+        flipped_yaw = raw_yaw + math.pi
+        flipped_yaw = (flipped_yaw + math.pi) % (2 * math.pi) - math.pi  # wrap to (-pi, pi]
+
+        if abs(self._angle_diff(flipped_yaw, velocity_heading)) < abs(self._angle_diff(raw_yaw, velocity_heading)):
+            return flipped_yaw
+        return raw_yaw
+
+    @staticmethod
+    def _angle_diff(a, b):
+        """
+        Compute the difference between two angles (in radians), wrapped to (-pi, pi]
+        Args:
+            a: Angle a in radians
+            b: Angle b in radians
+        Returns:
+            Difference a - b, wrapped to (-pi, pi]
+        """
+        return (a - b + math.pi) % (2 * math.pi) - math.pi
+
+    @classmethod
+    def _circular_median(cls, angles):
+        """
+        Compute the median of a small set of angles (radians), robust to wraparound.
+        Args:
+            angles: List of angles in radians
+        Returns:
+            Median angle in radians, wrapped to (-pi, pi]"""
+        angles = list(angles)
+        ref = angles[0]
+        unwrapped = sorted(ref + cls._angle_diff(a, ref) for a in angles)
+        n = len(unwrapped)
+        med = unwrapped[n // 2] if n % 2 == 1 else (unwrapped[n // 2 - 1] + unwrapped[n // 2]) / 2
+        return (med + math.pi) % (2 * math.pi) - math.pi
 
 
     def mark_missed(self, missed_threshold = 15, tentative_missed_threshold = 7):

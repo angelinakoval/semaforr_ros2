@@ -87,6 +87,10 @@ class Camera2DPoseDetectionNode(Node):
                 pose.position.x = detection.pixel_x
                 pose.position.y = detection.pixel_y
                 pose.position.z = detection.confidence  # Store confidence in z
+                fx, fy, fz = detection.orientation_facing
+                pose.orientation.x = fx
+                pose.orientation.y = fy
+                pose.orientation.z = fz
                 pose_array.poses.append(pose)
 
             self.pose_pub.publish(pose_array)
