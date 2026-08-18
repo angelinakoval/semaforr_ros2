@@ -18,6 +18,13 @@ ORIENTATION_MEDIAN_WINDOW = 7
 FLIP_SUSPECT_THRESHOLD = math.radians(130)
 MIN_SPEED_FOR_VELOCITY_HEADING = 0.2
 
+MAX_SPEED = 3.0
+
+# Multiply velocity by this on each missed frame, so a coasting
+# (uncorrected) track's extrapolation settles toward "stayed put" instead
+# of continuing to fly off in whatever direction it last inferred.
+COASTING_VELOCITY_DECAY = 0.85
+
 class KalmanPersonTracker():
     count = 0
 
@@ -68,7 +75,9 @@ class KalmanPersonTracker():
         self.q_scale = 0.5
         self.max_dt = 2.0
         self.min_dt = 1e-3
-    
+        self.last_dt = 0.1  # defensive default, overwritten on first predict()
+        self.time_since_update = 0.0  # accumulated real time since the last real detection matched
+
         self.initial_position = initial_position
 
         KalmanPersonTracker.count += 1
@@ -116,6 +125,8 @@ class KalmanPersonTracker():
         df = now - self.last_predict_time
         self.last_predict_time = now
         df = max(self.min_dt, min(df, self.max_dt))  # Clamp df to avoid extreme values
+        self.last_dt = df  # exposed for SortTracker.match_radius() -- see there for why
+        self.time_since_update += df  # accumulates across consecutive misses; reset in update()
 
         self.kf.F = np.array([[1., 0., df, 0.],
                               [0., 1., 0., df],
@@ -142,6 +153,8 @@ class KalmanPersonTracker():
         """
         self.kf.R = np.eye(2) * 0.1* (1.0 - confidence) + np.eye(2)*1e-6 # Adjust measurement noise based on confidence
         self.kf.update(np.array([[new_position[0]], [new_position[1]]]))
+        self._clamp_velocity()
+        self.time_since_update = 0.0  # a real detection just matched -- gap is closed
         self.history.append(new_position)
         if len(self.history) > 30:  # Keep only the last 30 positions
             self.history.pop(0)
@@ -157,6 +170,15 @@ class KalmanPersonTracker():
         
         if orientation is not None:
             self.orientation = self._filter_orientation(orientation)
+
+    def _clamp_velocity(self):
+        """Bound the Kalman filter's velocity estimate to MAX_SPEED"""
+        vx, vy = self.kf.x[2, 0], self.kf.x[3, 0]
+        speed = math.hypot(vx, vy)
+        if speed > MAX_SPEED:
+            scale = MAX_SPEED / speed
+            self.kf.x[2, 0] = vx * scale
+            self.kf.x[3, 0] = vy * scale
 
     def _filter_orientation(self, orientation):
         """
@@ -242,6 +264,8 @@ class KalmanPersonTracker():
         """
         self.missed += 1
         self.hits = 0  # reset hits if we miss a detection
+        self.kf.x[2, 0] *= COASTING_VELOCITY_DECAY
+        self.kf.x[3, 0] *= COASTING_VELOCITY_DECAY
         if self.state == 'TENTATIVE' and self.missed >= tentative_missed_threshold:
             self.state = 'DELETED'
         elif self.missed >= missed_threshold:

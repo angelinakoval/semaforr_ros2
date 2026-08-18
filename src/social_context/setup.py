@@ -42,6 +42,7 @@ setup(
             'global_human_localizer = social_context.pose_estimation.src.global_human_localizer:main',
             'sort_tracker = social_context.pose_estimation.src.tracking.sort_node:main',
             'tracking_evaluator = social_context.pose_estimation.src.tracking.testing.tracking_evaluator:main',
+            'formation_detector = social_context.pose_estimation.src.formation.formation_node:main',
         ],
     },
 )

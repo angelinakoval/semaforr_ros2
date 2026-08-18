@@ -16,6 +16,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TrackedPersonArray.msg"
   "msg/LocalizedPerson.msg"
   "msg/LocalizedPersonArray.msg"
+  "msg/FormationGroup.msg"
+  "msg/FormationGroupArray.msg"
   DEPENDENCIES std_msgs geometry_msgs
   )
 

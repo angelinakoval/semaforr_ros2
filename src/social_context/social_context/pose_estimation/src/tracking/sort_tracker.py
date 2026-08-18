@@ -6,8 +6,27 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 from .kalman_tracker import KalmanPersonTracker
 
+# Realistic SUSTAINED walking speed, close to the fastest real agent speed
+# in these scenarios (~1.6 m/s) plus a modest margin -- used to scale the
+# match radius by how much real time has actually elapsed since a tracker's
+# last real detection (see time_since_update in kalman_tracker.py). This is
+# deliberately NOT the same as a single-frame noise tolerance: a person can
+# look like they moved at a high "implied speed" over one noisy 0.1s frame
+# without that being physically real, but nobody sustains anywhere near
+# that speed for a full second or more, so the same constant can't be used
+# for both without either being too tight for noise or too loose for a
+# long coast.
+MAX_SUSTAINED_SPEED = 2.5
+
+# Fixed allowance (meters) for detection/localization noise. Does NOT scale
+# with elapsed time -- unlike real movement, measurement noise doesn't grow
+# the longer a tracker coasts, so this stays constant and MAX_SUSTAINED_SPEED
+# handles the time-scaling part on its own.
+POSITION_NOISE_SLACK = 0.6
+
+
 class SortTracker():
-    def __init__(self, distance_threshold = 2.0, missed_threshold = 15, tentative_missed_threshold = 7, hits_threshold = 3, combined_cost_threshold = 0.8, missed_grace_multiplier = 1.35):
+    def __init__(self, distance_threshold = 2.0, missed_threshold = 15, tentative_missed_threshold = 7, hits_threshold = 3, combined_cost_threshold = 0.8):
         """
         Initialize the SORT tracker
 
@@ -16,7 +35,6 @@ class SortTracker():
               tentative_missed_threshold: Number of consecutive misses before a tentative tracker is deleted
               hits_threshold: Number of consecutive hits before a tracker is confirmed
               combined_cost_threshold: Maximum combined cost (distance + appearance) to associate detections to existing trackers
-              missed_grace_multiplier: Widens the match radius by this factor for a tracker that has missed at least one detection
         """
         self.trackers = []
         self.distance_threshold = distance_threshold
@@ -24,7 +42,6 @@ class SortTracker():
         self.tentative_missed_threshold = tentative_missed_threshold
         self.hits_threshold = hits_threshold
         self.combined_cost_threshold = combined_cost_threshold
-        self.missed_grace_multiplier = missed_grace_multiplier
         self.frame_count = 0
 
 
@@ -50,8 +67,13 @@ class SortTracker():
 
     def match_radius(self, tracker_index, threshold=None):
         """
-        Effective match radius for a given tracker, widened once it's missed at
-        least one detection
+        Effective match radius for a given tracker: the maximum plausible
+        distance a real match could be at, given how much real time has
+        elapsed since this tracker's LAST REAL DETECTION (not just the
+        latest predict() tick) -- so a tracker that's coasted for 1.5
+        seconds gets proportionally more slack than one that missed a
+        single 0.1s frame, rather than a flat multiplier applied the same
+        way regardless of how long it's actually been missing.
 
         Args:
             tracker_index: index into self.trackers
@@ -59,9 +81,10 @@ class SortTracker():
         """
         if threshold is None:
             threshold = self.distance_threshold
-        if self.trackers[tracker_index].missed >= 1:
-            return threshold * self.missed_grace_multiplier
-        return threshold
+
+        time_since_update = self.trackers[tracker_index].time_since_update
+        speed_based_radius = POSITION_NOISE_SLACK + MAX_SUSTAINED_SPEED * time_since_update
+        return min(threshold, speed_based_radius)
 
 
     def is_ambiguous(self, item1, item2, threshold=None):
@@ -223,7 +246,12 @@ class SortTracker():
         for i, pred in enumerate(predicted_positions):
             for j, pos in enumerate(positions):
                 distance_cost = np.linalg.norm(np.array(pred) - np.array(pos))
-                distance_cost_normalized = min(distance_cost / self.match_radius(i), 1.0) # Normalize distance cost, so it can be combined with with appearance cost
+
+                if distance_cost > self.match_radius(i):
+                    cost_matrix[i, j] = 1000.0
+                    continue
+
+                distance_cost_normalized = distance_cost / self.match_radius(i)
                 if j in ambiguous_detections and detection_features[j] is not None and self.trackers[i].appearance_feature is not None:
                     similarity = feature_extractor.compute_similarity(self.trackers[i].appearance_feature, detection_features[j])
                     appearance_cost = 1 - similarity
