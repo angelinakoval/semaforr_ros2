@@ -12,8 +12,8 @@ setup(
     # not just the source tree.
     package_data={
         'social_context.trajectory_prediction.gst_updated': [
-            'results/100-gumbel_social_transformer-faster_lstm-lr_0.001-init_temp_0.5-edge_head_0-ebd_64-snl_1-snh_8-seed_1000/sj/checkpoint/*.pt',
-            'results/100-gumbel_social_transformer-faster_lstm-lr_0.001-init_temp_0.5-edge_head_0-ebd_64-snl_1-snh_8-seed_1000/sj/checkpoint/*.pickle',
+            'results/gst_default/sj/checkpoint/*.pt',
+            'results/gst_default/sj/checkpoint/*.pickle',
         ],
     },
     data_files=[

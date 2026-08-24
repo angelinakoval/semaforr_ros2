@@ -124,12 +124,12 @@ def predict(obs_seq_len,
     print("input_binary_mask shape:", input_binary_mask.shape)
     print()
 
-    #load_path = '/Users/ericguan/Documents/CrowdNav_Prediction_AttnGraph/gst_updated/results/100-gumbel_social_transformer-faster_lstm-lr_0.001-init_temp_0.5-edge_head_0-ebd_64-snl_1-snh_8-seed_1000/sj'
+    #load_path = '/Users/ericguan/Documents/CrowdNav_Prediction_AttnGraph/gst_updated/results/gst_default/sj'
     #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     device = torch.device("cpu")
     # Load args from a pickle file
 
-    # args_path = '/Users/ericguan/Documents/CrowdNav_Prediction_AttnGraph/gst_updated/results/100-gumbel_social_transformer-faster_lstm-lr_0.001-init_temp_0.5-edge_head_0-ebd_64-snl_1-snh_8-seed_1000/sj/checkpoint/args.pickle'
+    # args_path = '/Users/ericguan/Documents/CrowdNav_Prediction_AttnGraph/gst_updated/results/gst_default/sj/checkpoint/args.pickle'
     with open(args_path, 'rb') as f:
         args = pickle.load(f)
     # This checkpoint was trained with a specific obs/pred_seq_len (see
