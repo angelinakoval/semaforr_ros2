@@ -1,0 +1,15 @@
+{
+  "$comment": "This file defines coverage thresholds behavior for runtime configuration and reproducible experiment setup. It records the declarations, settings, fixtures, or guidance needed by that responsibility. Its package-relative location is `config/coverage_thresholds.json`.",
+  "minimum_line_percent": 80.0,
+  "files": [
+    "src/config/navigation_configuration.cpp",
+    "src/domain/motion_model.cpp",
+    "src/decision/obstacle_veto_rule.cpp",
+    "src/decision/decision_coordinator.cpp",
+    "src/decision/mission_manager.cpp",
+    "src/decision/advisors/navigation_advisor.cpp",
+    "src/decision/navigation_engine.cpp",
+    "src/planning/domain_planner.cpp",
+    "src/planning/planning_coordinator.cpp"
+  ]
+}

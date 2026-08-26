@@ -1,0 +1,126 @@
+name: ROS 2 Humble
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-lint-test:
+    runs-on: ubuntu-22.04
+    container:
+      image: ros:humble
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools and dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            clang-format \
+            clang-tidy \
+            python3-colcon-common-extensions \
+            python3-pytest \
+            python3-rosdep
+          rosdep update
+          rosdep install \
+            --from-paths src --ignore-src --rosdistro humble -r -y
+
+      - name: Build workspace
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build \
+            --event-handlers console_direct+ \
+            --cmake-args \
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Lint modern source
+        run: |
+          python3 src/semaforr/scripts/check_source_quality.py
+          find src \
+            -type f \( -name '*.hpp' -o -name '*.cpp' \) -print0 \
+            | xargs -0 clang-format --dry-run --Werror
+          find src/semaforr/src -type f -name '*.cpp' -print0 \
+            | xargs -0 clang-tidy -p build/semaforr
+          clang-tidy -p build/why src/why/src/main.cpp
+          clang-tidy -p build/why_plan src/why_plan/src/main.cpp
+          python3 -m py_compile \
+            src/semaforr/launch/example_simulation.launch.py
+
+      - name: Unit and contract tests
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --packages-skip semaforr
+          ctest --test-dir build/semaforr \
+            --output-on-failure \
+            -E semaforr_navigation_scenario_test
+
+      - name: Integration tests
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          ctest --test-dir build/semaforr \
+            --output-on-failure \
+            -R semaforr_navigation_scenario_test
+          ros2 launch semaforr example_simulation.launch.py \
+            duration:=8.0 output:=/tmp/semaforr-ci-trace.json
+          python3 -c "import json; \
+            data=json.load(open('/tmp/semaforr-ci-trace.json')); \
+            assert data['result']['decisions'], 'empty decision trace'"
+
+      - name: Report tests
+        if: always()
+        run: colcon test-result --test-result-base build --verbose
+
+  docker-image:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build deployable image
+        run: docker build --tag semaforr-ros2:ci .
+
+  sanitizer-and-coverage:
+    runs-on: ubuntu-22.04
+    container:
+      image: ros:humble
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [sanitizer, coverage]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install verification dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            lcov \
+            python3-colcon-common-extensions \
+            python3-pytest \
+            python3-rosdep
+          rosdep update
+          rosdep install \
+            --from-paths src --ignore-src --rosdistro humble -r -y
+
+      - name: Run ${{ matrix.profile }} profile
+        run: |
+          source /opt/ros/humble/setup.bash
+          src/semaforr/scripts/run_phase0.sh "${{ matrix.profile }}"
+
+      - name: Upload coverage report
+        if: matrix.profile == 'coverage'
+        uses: actions/upload-artifact@v4
+        with:
+          name: semaforr-coverage
+          path: coverage/
