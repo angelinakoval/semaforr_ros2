@@ -1,0 +1,139 @@
+"""SemaFORR module overview.
+
+Summary:
+    This file implements stage tutorial baseline launch behavior for ROS 2 launch composition. It centers on `generate_launch_description`. Its package-relative location is `launch/stage_tutorial_baseline.launch.py`.
+
+Arguments:
+    Not applicable at module scope.
+
+Returns:
+    Not applicable at module scope.
+
+Raises:
+    Import-time dependency errors may propagate.
+"""
+
+
+
+
+
+
+
+
+
+from pathlib import Path
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+
+
+def generate_launch_description():
+    """Summary:
+        Performs the generate launch description operation for this subsystem.
+
+    Args:
+        None.
+
+    Returns:
+        Any
+
+    Raises:
+        None documented; dependency failures may propagate.
+    """
+    package_share = Path(get_package_share_directory("semaforr"))
+    config_dir = package_share / "config"
+    tutorial_dir = config_dir / "stage_tutorial"
+
+    output = LaunchConfiguration("output")
+    duration = LaunchConfiguration("duration")
+    sensor_cutoff = LaunchConfiguration("sensor_cutoff")
+    profile = LaunchConfiguration("profile")
+    random_seed = LaunchConfiguration("random_seed")
+
+    semaforr = Node(
+        package="semaforr",
+        executable="semaforr_node",
+        name="semaforr",
+        output="screen",
+        parameters=[
+            str(config_dir / "semaforr.yaml"),
+            {
+                "map.path": str(tutorial_dir / "stage_tutorialS.xml"),
+                "mission.tasks_path": str(tutorial_dir / "target.conf"),
+                "experiment.mode": profile,
+                "experiment.random_seed": ParameterValue(
+                    random_seed, value_type=int
+                ),
+            }
+        ],
+    )
+
+    recorder = Node(
+        package="semaforr",
+        executable="semaforr_record_baseline",
+        name="semaforr_baseline_recorder",
+        output="screen",
+        arguments=[
+            "--output",
+            output,
+            "--duration",
+            duration,
+            "--sensor-cutoff",
+            sensor_cutoff,
+        ],
+    )
+
+    stop_after_recording = RegisterEventHandler(
+        OnProcessExit(
+            target_action=recorder,
+            on_exit=[
+                EmitEvent(
+                    event=Shutdown(
+                        reason="The SemaFORR baseline recording completed"
+                    )
+                )
+            ],
+        )
+    )
+
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                "profile",
+                default_value="full",
+                description="Named controller profile to evaluate",
+            ),
+            DeclareLaunchArgument(
+                "random_seed",
+                default_value="0",
+                description="Deterministic arbitration seed",
+            ),
+            DeclareLaunchArgument(
+                "output",
+                default_value="baseline-results/stage_tutorial.actual.json",
+                description="Destination for the runtime characterization trace",
+            ),
+            DeclareLaunchArgument(
+                "duration",
+                default_value="20.0",
+                description="Scenario duration in seconds",
+            ),
+            DeclareLaunchArgument(
+                "sensor_cutoff",
+                default_value="-1.0",
+                description=(
+                    "Stop publishing sensors at this time; negative disables "
+                    "the cutoff"
+                ),
+            ),
+            semaforr,
+            recorder,
+            stop_after_recording,
+        ]
+    )

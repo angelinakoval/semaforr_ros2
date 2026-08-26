@@ -1,0 +1,336 @@
+# File overview: This file defines semaforr behavior for runtime configuration and reproducible experiment setup. It records the declarations, settings, fixtures, or guidance needed by that responsibility. Its package-relative location is `config/semaforr.yaml`.
+semaforr:
+  ros__parameters:
+    experiment:
+      # "modernized" is the currently runnable implementation. The reserved
+      # "compatibility" mode is rejected until its fidelity blockers are
+      # resolved and validated.
+      behavior_mode: modernized
+      mode: custom
+      # Deprecated alias retained for launch-file compatibility.
+      profile: custom
+      random_seed: 0
+      seeds:
+        tier_three_ties: 0
+        lle_fallback: 0
+        planner_ties: 0
+        clustering: 0
+        simulation_noise: 0
+    reproducibility:
+      recording:
+        enabled: false
+      trace_path: ""
+      source_revision: "unknown"
+      test_suite_revision: "unknown"
+    explanations:
+      mode: why
+      retain_candidate_plans: true
+
+    tiers:
+      tier1:
+        enabled: true
+        rules: [victory, avoid_obstacles, not_opposite, enforcer, thru,
+                behind, out, low_level_exploration, forward, precedent]
+        reactive_planners: [thru, behind, out, low_level_exploration]
+      tier2:
+        enabled: true
+        maximum_planning_attempts_per_task: 3
+        tie_policy: profile
+      tier3:
+        enabled: true
+        # profile resolves to compatibility_comments + exact ties in
+        # compatibility mode and weighted_normalized + tolerance otherwise.
+        scoring_policy: profile
+        tie_policy: profile
+        tie_tolerance: 1.0e-9
+
+    phases:
+      initial_exploration:
+        enabled: false
+        strategy: hle
+        behavior_policy: profile
+        time_limit_s: 1200.0
+        decision_budget: 10000
+        observation_budget: 0
+        minimum_clearance_m: 0.8
+        heading_tolerance_rad: 0.2
+        candidate_completion_distance_m: 0.1
+        cue_similarity_radius_m: 0.5
+        passage_grid_resolution_m: 0.5
+        minimum_bundle_beams: 1
+        left_focus_min_rad: 0.6544984694978736
+        left_focus_max_rad: 0.9162978572970231
+        right_focus_min_rad: -0.9162978572970231
+        right_focus_max_rad: -0.6544984694978736
+        left_open_min_rad: 0.0
+        left_open_max_rad: 1.5707963267948966
+        right_open_min_rad: -1.5707963267948966
+        right_open_max_rad: 0.0
+        minimum_length_to_width_ratio: 1.5
+        minimum_passage_length_m: 1.0
+        large_room_width_m: 3.0
+        large_room_length_m: 3.0
+        cue_clearance_margin_m: 0.05
+        maximum_width_change_ratio: 0.35
+        hard_turn_threshold_rad: 0.7853981633974483
+        end_of_passage_clearance_m: 0.8
+        minimum_extension_m: 0.25
+      target_navigation:
+        enabled: true
+
+    exploration:
+      reactive:
+        enabled: true
+        strategy: lle
+        behavior_policy: profile
+        # Used only by the modernized/adapted policy.
+        stalled_history_extension: true
+        closest_target_bin_m: 1.0
+      opportunistic:
+        enabled: false
+
+    social:
+      enabled: true
+      advisors:
+        enabled: true
+      planners:
+        enabled: true
+      input:
+        mode: tracked
+        tracked_people_topic: /human_poses_3d_tracked_global
+        tracked_predictions_topic: /pedestrian_predictions_tracked
+        hunav_agents_topic: /human_states
+        hunav_predictions_topic: /pedestrian_predictions
+        formations_topic: /formation_groups
+        coordinate_frame: map
+        prediction_step_s: 1.0
+        prediction_steps: 5
+        current_maximum_age_s: 0.75
+        prediction_maximum_age_s: 6.0
+        minimum_confidence: 0.25
+        fallback_prediction: constant_velocity
+        history_step_s: 0.1
+        default_position_variance: 0.09
+        minimum_covariance_confidence: 0.05
+        hunav_confidence: 1.0
+      formations:
+        enabled: true
+        maximum_age_s: 1.0
+        minimum_confidence: 0.5
+      visualizations:
+        enabled: true
+      learning:
+        enabled: true
+        estimator: count_exposure
+        resolution_m: 1.0
+        origin_x_m: 0.0
+        origin_y_m: 0.0
+        discount_factor: 0.7
+        minimum_update_period_s: 1.0
+        encounter_radius_m: 1.0
+        minimum_flow_speed_mps: 0.05
+        confidence_exposures: 10.0
+        cusum_increase: 4.0
+        cusum_decrease: -3.0
+        cusum_threshold: 10.0
+        random_seed: 0
+
+    topics:
+      pose: pose
+      scan: scan_raw
+      command: cmd_vel
+      navigation_state: navigation_state
+      decision_records: decision_records
+      crowd_density: crowd_density
+      crowd_risk: crowd_risk
+      crowd_flow: crowd_flow
+      crowd_people: crowd_people
+      crowd_predictions: crowd_predictions
+      crowd_formations: crowd_formations
+
+    qos:
+      sensors:
+        depth: 10
+        reliability: reliable
+        durability: volatile
+      command:
+        depth: 1
+        reliability: reliable
+        durability: volatile
+
+    frames:
+      global: map
+      scan: base_laser_link
+      transform_timeout_s: 0.05
+
+    timing:
+      control_rate_hz: 30.0
+      sensor_timeout_s: 0.5
+      sensor_sync_tolerance_s: 0.1
+
+    command:
+      linear_velocity_mps: 0.5
+      angular_velocity_radps: 0.5
+      turn_linear_velocity_mps: 0.01
+      maximum_linear_velocity_mps: 0.5
+      maximum_angular_velocity_radps: 0.5
+      maximum_linear_acceleration_mps2: 1.0
+      maximum_angular_acceleration_radps2: 1.0
+      distance_tolerance_m: 0.06
+      angle_tolerance_rad: 0.11
+      timeout_multiplier: 1.5
+      minimum_timeout_s: 0.1
+      odometry_reset_distance_m: 2.0
+      odometry_reset_angle_rad: 2.8
+
+    # The launch file resolves these data files from the installed package.
+    map:
+      # Robot map access is independent of any simulator environment map.
+      mode: mapless
+      on_load_failure: fail_startup
+      path: ""
+      length_m: 200
+      height_m: 200
+      granularity_m: 0.3
+      origin_x_m: 0.0
+      origin_y_m: 0.0
+      occupancy_resolution_m: 0.3
+      obstacle_inflation_m: 0.0
+      bounds_policy: require_declared
+      inferred_bounds_padding_m: 1.0
+      planning:
+        enabled: true
+      visualizations:
+        enabled: false
+
+    mission:
+      tasks_path: ""
+      decision_limit: 20
+    actions:
+      move_distances_m: [0.1, 0.2, 0.4, 0.8, 1.6, 3.2]
+      rotation_angles_rad: [0.0873, 0.2618, 0.5236, 0.7854, 1.0472, 1.5708]
+
+    safety:
+      command_envelope:
+        enabled: true
+      sensor_freshness_timeout_s: 0.5
+      visibility_epsilon_m: 0.005
+      laser_angle_increment_rad: 0.005817
+      robot_radius_m: 0.2794
+      obstacle_buffer_m: 0.05
+      max_laser_range_m: 5.0
+      max_forward_buffer_m: 0.1
+      max_forward_sweep_rad: 0.5236
+
+    features:
+      # Select only the spatial-learning algorithms; this is independent of
+      # the whole-system behavior-mode fidelity claim.
+      spatial_learning_profile: modernized
+      trails: true
+      conveyors: true
+      regions: true
+      doors: true
+      hallways: true
+      barriers: false
+      astar: false
+      known_grid: true
+      sensed_occupancy: true
+      inclusion_grid: true
+      highways: false
+      circumstances: true
+      loaded_highway_model: ""
+
+    grids:
+      extent_policy: expand
+      frame_id: map
+      resolution_m: 0.5
+      highway:
+        origin_x_m: 0.0
+        origin_y_m: 0.0
+        # "profile" selects the compatibility or modernized policy named by
+        # features.spatial_learning_profile.
+        smoothing_policy: profile
+        component_selection_policy: profile
+      mapless:
+        initial_width_m: 20.0
+        initial_height_m: 20.0
+      expansion:
+        margin_m: 2.0
+        increment_cells: 32
+        maximum_width_m: 0.0
+        maximum_height_m: 0.0
+        memory_limit_cells: 10000000
+      visualizations:
+        enabled: false
+      sensed:
+        free_observations_to_clear: 3
+        dynamic_expiry_observations: 30
+      planning:
+        map_unknown_policy: prohibited
+        sensor_unknown_policy: prohibited
+        localization_uncertainty_m: 0.05
+        turning_footprint_margin_m: 0.0
+        dynamic_obstacle_margin_m: 0.10
+        unknown_cost_multiplier: 8.0
+
+    circumstances:
+      # adapted_threshold is deterministic normalized-L1 grouping;
+      # dissertation_compatible uses similarity-graph components and a
+      # softmax prototype classifier.
+      learning_mode: adapted_threshold
+      setting_resolution_m: 1.0
+      setting_radius_m: 10.0
+      minimum_cluster_size: 50
+      assignment_confidence_threshold: 0.95
+      similarity_l1_threshold: 125.0
+      reclustering_threshold: 100
+      minimum_case_evidence: 10
+      minimum_action_evidence: 5
+      accuracy_threshold: 0.75
+      action_confidence_threshold: 0.25
+      partial_success_credit: 0.5
+      safety_interruption_is_negative_evidence: true
+      precedent_veto_enabled: true
+      tier3_weighting_enabled: false
+      tier3_maximum_influence: 0.5
+      persistence_policy: session_only
+      model_path: ""
+      model_version: circumstance_case_v2
+      classifier_version: centroid_softmax_v1
+      feature_version: robot_centered_heading_normalized_freespace_v1
+      distance_bin_base_m: 2.0
+      angle_bin_count: 8
+    planners:
+      # Skeleton and highway planning use learned representations and remain
+      # available in mapless mode. Static grid planners require a map;
+      # sensor_distance is partial and stays within observed free space.
+      enabled: [skeleton]
+      selection_policy: range_vote
+
+    advisors:
+      names:
+        [goal_progress, goal_progress_linear, clearance,
+         clearance_rotation, exploration, social_navigation,
+         crowd_avoid, risk_avoid, flow_follow, avoid_revisit,
+         prefer_regions, prefer_highways, prefer_doors, follow_trails]
+      enabled: [true, true, true, true, true, true, true, true, true,
+                true, true, true, true, true]
+      weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0, 1.0, 1.0]
+      # Four reserved values per advisor. ROS parameters do not support
+      # arrays of mappings, so this remains a validated flat array.
+      parameters:
+        [0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0]

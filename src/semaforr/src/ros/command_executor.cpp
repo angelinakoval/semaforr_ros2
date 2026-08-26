@@ -1,0 +1,454 @@
+/**
+ * @file command_executor.cpp
+ * @brief Command executor responsibilities.
+ *
+ * @details This file implements command executor behavior for the ROS 2 composition
+ * and message-adaptation boundary. It records the declarations, settings,
+ * fixtures, or guidance needed by that responsibility. Its
+ * package-relative location is `src/ros/command_executor.cpp`.
+ */
+#include <algorithm>
+#include <cmath>
+#include <semaforr/ros/command_executor.hpp>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+namespace semaforr::ros {
+namespace {
+
+/**
+ * @brief Performs the require positive finite operation for this subsystem.
+ *
+ * Arguments:
+ * - @p value: Supplies value input to the operation.
+ * - @p name: Supplies name input to the operation.
+ *
+ * Returns:
+ * - No value; effects are applied to owned state or outputs.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+void requirePositiveFinite(double value, std::string_view name) {
+  if (!std::isfinite(value) || value <= 0.0) {
+    throw std::invalid_argument(std::string(name) +
+                                " must be finite and positive");
+  }
+}
+
+/**
+ * @brief Performs the command for operation for this subsystem.
+ *
+ * Arguments:
+ * - @p action: Supplies action input to the operation.
+ * - @p configuration: Supplies configuration input to the operation.
+ *
+ * Returns:
+ * - `domain::VelocityCommand` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+domain::VelocityCommand commandFor(
+    const domain::Action& action,
+    const CommandExecutorConfiguration& configuration) {
+  switch (action.type()) {
+    case domain::ActionType::Forward:
+      return {configuration.linear_velocity_mps, 0.0};
+    case domain::ActionType::TurnRight:
+      return {configuration.turn_linear_velocity_mps,
+              -configuration.angular_velocity_radps};
+    case domain::ActionType::TurnLeft:
+      return {configuration.turn_linear_velocity_mps,
+              configuration.angular_velocity_radps};
+    case domain::ActionType::Pause:
+      return {};
+  }
+  return {};
+}
+
+/**
+ * @brief Performs the approach operation for this subsystem.
+ *
+ * Arguments:
+ * - @p current: Supplies current input to the operation.
+ * - @p target: Supplies target input to the operation.
+ * - @p maximum_delta: Supplies maximum delta input to the operation.
+ *
+ * Returns:
+ * - `double` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+double approach(double current, double target, double maximum_delta) {
+  return current +
+         std::clamp(target - current, -maximum_delta, maximum_delta);
+}
+
+}  // namespace
+
+/**
+ * @brief Performs the command executor operation for this subsystem.
+ *
+ * Arguments:
+ * - @p configuration: Supplies configuration input to the operation.
+ *
+ * Returns:
+ * - No value; effects are applied to owned state or outputs.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+CommandExecutor::CommandExecutor(CommandExecutorConfiguration configuration)
+    : configuration_(std::move(configuration)) {
+  requirePositiveFinite(configuration_.linear_velocity_mps, "linear velocity");
+  requirePositiveFinite(configuration_.angular_velocity_radps,
+                        "angular velocity");
+  if (!std::isfinite(configuration_.turn_linear_velocity_mps) ||
+      configuration_.turn_linear_velocity_mps < 0.0) {
+    throw std::invalid_argument(
+        "turn linear velocity must be finite and non-negative");
+  }
+  requirePositiveFinite(configuration_.maximum_linear_velocity_mps,
+                        "maximum linear velocity");
+  requirePositiveFinite(configuration_.maximum_angular_velocity_radps,
+                        "maximum angular velocity");
+  requirePositiveFinite(configuration_.maximum_linear_acceleration_mps2,
+                        "maximum linear acceleration");
+  requirePositiveFinite(configuration_.maximum_angular_acceleration_radps2,
+                        "maximum angular acceleration");
+  if (configuration_.linear_velocity_mps >
+          configuration_.maximum_linear_velocity_mps ||
+      configuration_.turn_linear_velocity_mps >
+          configuration_.maximum_linear_velocity_mps ||
+      configuration_.angular_velocity_radps >
+          configuration_.maximum_angular_velocity_radps)
+    throw std::invalid_argument(
+        "command velocities must not exceed configured platform bounds");
+  requirePositiveFinite(configuration_.distance_tolerance_m,
+                        "distance tolerance");
+  requirePositiveFinite(configuration_.angle_tolerance_rad, "angle tolerance");
+  requirePositiveFinite(configuration_.timeout_multiplier,
+                        "timeout multiplier");
+  requirePositiveFinite(configuration_.minimum_timeout_s, "minimum timeout");
+  requirePositiveFinite(configuration_.odometry_reset_distance_m,
+                        "odometry reset distance");
+  requirePositiveFinite(configuration_.odometry_reset_angle_rad,
+                        "odometry reset angle");
+}
+
+/**
+ * @brief Performs the start operation for this subsystem.
+ *
+ * Arguments:
+ * - @p request: Supplies request input to the operation.
+ * - @p pose: Supplies pose input to the operation.
+ * - @p now: Supplies now input to the operation.
+ *
+ * Returns:
+ * - `ActionExecutionUpdate` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+ActionExecutionUpdate CommandExecutor::start(
+    const ActionExecutionRequest& request, const domain::Pose2D& pose,
+    const rclcpp::Time& now) {
+  if (executing())
+    throw std::logic_error(
+        "cannot start an action while another action is executing");
+  if (!pose.position.finite()) {
+    throw std::invalid_argument("action start pose must be finite");
+  }
+  if (!std::isfinite(request.target_distance_m) ||
+      request.target_distance_m < 0.0 ||
+      !std::isfinite(request.target_angle_rad) ||
+      request.target_angle_rad < 0.0) {
+    throw std::invalid_argument(
+        "action targets must be finite and non-negative");
+  }
+  const std::size_t magnitude = request.action.magnitude_index();
+  if ((request.action.type() == domain::ActionType::Forward &&
+       magnitude > configuration_.maximum_move_action_index) ||
+      ((request.action.type() == domain::ActionType::TurnLeft ||
+        request.action.type() == domain::ActionType::TurnRight) &&
+       magnitude > configuration_.maximum_rotation_action_index))
+    throw std::invalid_argument(
+        "action magnitude index is outside the configured action space");
+  if (request.action.type() == domain::ActionType::Forward &&
+      request.target_distance_m <= 0.0) {
+    throw std::invalid_argument(
+        "forward action requires a positive distance target");
+  }
+  if ((request.action.type() == domain::ActionType::TurnLeft ||
+       request.action.type() == domain::ActionType::TurnRight) &&
+      request.target_angle_rad <= 0.0) {
+    throw std::invalid_argument("turn action requires a positive angle target");
+  }
+
+  request_ = request;
+  previous_pose_ = pose;
+  start_pose_ = pose;
+  started_at_ = now;
+  command_updated_at_ = now;
+  status_ = ActionExecutionStatus::Executing;
+  progress_ = 0.0;
+  distance_achieved_m_ = 0.0;
+  rotation_achieved_rad_ = 0.0;
+  command_ = {};
+  return {status_, command_, progress_, target(), request.decision_id,
+          request.action_id, pose, pose, 0.0, 0.0};
+}
+
+/**
+ * @brief Updates package content for this subsystem.
+ *
+ * Arguments:
+ * - @p pose: Supplies pose input to the operation.
+ * - @p now: Supplies now input to the operation.
+ *
+ * Returns:
+ * - `ActionExecutionUpdate` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+ActionExecutionUpdate CommandExecutor::update(const domain::Pose2D& pose,
+                                              const rclcpp::Time& now) {
+  if (!executing() || !request_ || !previous_pose_ || !started_at_ ||
+      !command_updated_at_) {
+    const domain::Pose2D pose_value = previous_pose_.value_or(domain::Pose2D{});
+    const domain::Pose2D start_value = start_pose_.value_or(pose_value);
+    return {status_, command_, progress_, target(),
+            request_ ? request_->decision_id : 0U,
+            request_ ? request_->action_id : 0U, start_value, pose_value,
+            distance_achieved_m_, rotation_achieved_rad_};
+  }
+  if (now.get_clock_type() != started_at_->get_clock_type() ||
+      now < *started_at_) {
+    return terminal(ActionExecutionStatus::ClockReset);
+  }
+
+  const double translation =
+      std::hypot(pose.position.x_m - previous_pose_->position.x_m,
+                 pose.position.y_m - previous_pose_->position.y_m);
+  const double rotation = std::fabs(domain::Angle::normalize(
+      pose.heading.radians() - previous_pose_->heading.radians()));
+  if (!std::isfinite(translation) || !std::isfinite(rotation) ||
+      translation > configuration_.odometry_reset_distance_m ||
+      rotation > configuration_.odometry_reset_angle_rad) {
+    return terminal(ActionExecutionStatus::OdometryReset);
+  }
+  distance_achieved_m_ += translation;
+  rotation_achieved_rad_ += rotation;
+
+  switch (request_->action.type()) {
+    case domain::ActionType::Forward:
+      progress_ += translation;
+      break;
+    case domain::ActionType::TurnRight:
+    case domain::ActionType::TurnLeft:
+      progress_ += rotation;
+      break;
+    case domain::ActionType::Pause:
+      break;
+  }
+  previous_pose_ = pose;
+
+  const double elapsed_s = (now - *started_at_).seconds();
+  bool completed = false;
+  switch (request_->action.type()) {
+    case domain::ActionType::Forward:
+      completed = progress_ + configuration_.distance_tolerance_m >=
+                  request_->target_distance_m;
+      break;
+    case domain::ActionType::TurnRight:
+    case domain::ActionType::TurnLeft: {
+      const double tolerance = std::min(configuration_.angle_tolerance_rad,
+                                        request_->target_angle_rad * 0.25);
+      completed = progress_ + tolerance >= request_->target_angle_rad;
+      break;
+    }
+    case domain::ActionType::Pause:
+      completed = elapsed_s >= configuration_.minimum_timeout_s;
+      break;
+  }
+  if (completed) {
+    return terminal(ActionExecutionStatus::Completed);
+  }
+  if (elapsed_s >= timeoutSeconds()) {
+    return terminal(ActionExecutionStatus::TimedOut);
+  }
+  const double command_elapsed_s = (now - *command_updated_at_).seconds();
+  if (!std::isfinite(command_elapsed_s) || command_elapsed_s < 0.0)
+    return terminal(ActionExecutionStatus::ClockReset);
+  const auto desired = commandFor(request_->action, configuration_);
+  command_.linear_mps =
+      approach(command_.linear_mps, desired.linear_mps,
+               configuration_.maximum_linear_acceleration_mps2 *
+                   command_elapsed_s);
+  command_.angular_radps =
+      approach(command_.angular_radps, desired.angular_radps,
+               configuration_.maximum_angular_acceleration_radps2 *
+                   command_elapsed_s);
+  command_updated_at_ = now;
+  if (!command_.finite() ||
+      std::abs(command_.linear_mps) >
+          configuration_.maximum_linear_velocity_mps ||
+      std::abs(command_.angular_radps) >
+          configuration_.maximum_angular_velocity_radps)
+    return terminal(ActionExecutionStatus::SafetyInterrupted);
+  return {status_, command_, progress_, target(), request_->decision_id,
+          request_->action_id, start_pose_.value_or(pose), pose,
+          distance_achieved_m_, rotation_achieved_rad_};
+}
+
+/**
+ * @brief Performs the cancel operation for this subsystem.
+ *
+ * Arguments:
+ * - @p status: Supplies status input to the operation.
+ *
+ * Returns:
+ * - `ActionExecutionUpdate` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+ActionExecutionUpdate CommandExecutor::cancel(
+    ActionExecutionStatus status) noexcept {
+  return terminal(status);
+}
+
+/**
+ * @brief Performs the terminal operation for this subsystem.
+ *
+ * Arguments:
+ * - @p status: Supplies status input to the operation.
+ *
+ * Returns:
+ * - `ActionExecutionUpdate` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+ActionExecutionUpdate CommandExecutor::terminal(
+    ActionExecutionStatus status) noexcept {
+  status_ = status;
+  command_ = {};
+  const domain::Pose2D final_pose = previous_pose_.value_or(domain::Pose2D{});
+  return {status_, command_, progress_, target(),
+          request_ ? request_->decision_id : 0U,
+          request_ ? request_->action_id : 0U,
+          start_pose_.value_or(final_pose), final_pose, distance_achieved_m_,
+          rotation_achieved_rad_};
+}
+
+/**
+ * @brief Performs the timeout seconds operation for this subsystem.
+ *
+ * Arguments:
+ * - None.
+ *
+ * Returns:
+ * - `double` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+double CommandExecutor::timeoutSeconds() const noexcept {
+  if (!request_) {
+    return configuration_.minimum_timeout_s;
+  }
+  double nominal_s = configuration_.minimum_timeout_s;
+  switch (request_->action.type()) {
+    case domain::ActionType::Forward:
+      nominal_s =
+          request_->target_distance_m / configuration_.linear_velocity_mps;
+      nominal_s += configuration_.linear_velocity_mps /
+                   configuration_.maximum_linear_acceleration_mps2;
+      break;
+    case domain::ActionType::TurnRight:
+    case domain::ActionType::TurnLeft:
+      nominal_s =
+          request_->target_angle_rad / configuration_.angular_velocity_radps;
+      nominal_s += configuration_.angular_velocity_radps /
+                   configuration_.maximum_angular_acceleration_radps2;
+      break;
+    case domain::ActionType::Pause:
+      break;
+  }
+  return std::max(configuration_.minimum_timeout_s,
+                  nominal_s * configuration_.timeout_multiplier);
+}
+
+/**
+ * @brief Performs the target operation for this subsystem.
+ *
+ * Arguments:
+ * - None.
+ *
+ * Returns:
+ * - `double` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+double CommandExecutor::target() const noexcept {
+  if (!request_) {
+    return 0.0;
+  }
+  return request_->action.type() == domain::ActionType::Forward
+             ? request_->target_distance_m
+             : request_->target_angle_rad;
+}
+
+/**
+ * @brief Converts string for this subsystem.
+ *
+ * Arguments:
+ * - @p status: Supplies status input to the operation.
+ *
+ * Returns:
+ * - `std::string_view` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::string_view toString(ActionExecutionStatus status) noexcept {
+  switch (status) {
+    case ActionExecutionStatus::Idle:
+      return "idle";
+    case ActionExecutionStatus::Executing:
+      return "executing";
+    case ActionExecutionStatus::Completed:
+      return "completed";
+    case ActionExecutionStatus::TimedOut:
+      return "timed_out";
+    case ActionExecutionStatus::OdometryReset:
+      return "odometry_reset";
+    case ActionExecutionStatus::ClockReset:
+      return "clock_reset";
+    case ActionExecutionStatus::Cancelled:
+      return "cancelled";
+    case ActionExecutionStatus::SafetyInterrupted:
+      return "safety_interrupted";
+    case ActionExecutionStatus::ControllerRejected:
+      return "controller_rejected";
+    case ActionExecutionStatus::ControllerFailure:
+      return "controller_failure";
+    case ActionExecutionStatus::GoalPreempted:
+      return "goal_preempted";
+    case ActionExecutionStatus::NavigationModeTransition:
+      return "navigation_mode_transition";
+    case ActionExecutionStatus::SensorLost:
+      return "sensor_lost";
+    case ActionExecutionStatus::Shutdown:
+      return "shutdown";
+  }
+  return "unknown";
+}
+
+}  // namespace semaforr::ros

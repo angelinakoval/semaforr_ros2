@@ -1,0 +1,366 @@
+/**
+ * @file plan_types.cpp
+ * @brief Plan types responsibilities.
+ *
+ * @details This file implements plan types behavior for path planning and
+ * hierarchical plan construction. It records the declarations, settings,
+ * fixtures, or guidance needed by that responsibility. Its
+ * package-relative location is `src/planning/plan_types.cpp`.
+ */
+#include <semaforr/planning/planner.hpp>
+#include <sstream>
+
+namespace semaforr::planning {
+
+/**
+ * @brief Converts string for this subsystem.
+ *
+ * Arguments:
+ * - @p family: Supplies family input to the operation.
+ *
+ * Returns:
+ * - `std::string_view` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::string_view toString(PlanFamily family) noexcept {
+  return family == PlanFamily::Grid ? "grid" : "model";
+}
+
+/**
+ * @brief Converts string for this subsystem.
+ *
+ * Arguments:
+ * - @p validity: Supplies validity input to the operation.
+ *
+ * Returns:
+ * - `std::string_view` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::string_view toString(PlanValidity validity) noexcept {
+  switch (validity) {
+    case PlanValidity::Valid: return "valid";
+    case PlanValidity::Stale: return "stale";
+    case PlanValidity::Invalid: return "invalid";
+    case PlanValidity::Complete: return "complete";
+  }
+  return "invalid";
+}
+
+/**
+ * @brief Converts string for this subsystem.
+ *
+ * Arguments:
+ * - @p mode: Supplies mode input to the operation.
+ *
+ * Returns:
+ * - `std::string_view` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::string_view toString(PlanningOperatingMode mode) noexcept {
+  return mode == PlanningOperatingMode::MapEnabled ? "map_enabled"
+                                                   : "mapless";
+}
+
+/**
+ * @brief Performs the step target operation for this subsystem.
+ *
+ * Arguments:
+ * - @p step: Supplies step input to the operation.
+ *
+ * Returns:
+ * - `std::optional<domain::Point2D>` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::optional<domain::Point2D> stepTarget(const PlanStep& step) noexcept {
+  return std::visit(
+      [](const auto& value) -> std::optional<domain::Point2D> {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, WaypointStep>) {
+          return value.target;
+        } else if constexpr (std::is_same_v<T, RegionStep>) {
+          return value.center;
+        } else if constexpr (std::is_same_v<T, VisibilityConnectionStep>) {
+          return value.to;
+        } else if constexpr (std::is_same_v<T, IntersectionStep>) {
+          return value.centroid;
+        } else if constexpr (std::is_same_v<T, HighwayEntryStep>) {
+          return value.entry;
+        } else if constexpr (std::is_same_v<T, HighwayExitStep>) {
+          return value.exit;
+        } else if constexpr (std::is_same_v<T, FinalTargetStep>) {
+          return value.target;
+        } else if constexpr (std::is_same_v<T, SkeletonTransitionStep>) {
+          if (value.supporting_subtrail.empty()) return std::nullopt;
+          // The transition is complete at its destination. Returning the
+          // first marker would let active-step advancement skip an entire
+          // edge whenever that marker is the current region center.
+          return value.supporting_subtrail.back();
+        } else if constexpr (std::is_same_v<T, SubtrailStep>) {
+          if (value.waypoints.empty()) return std::nullopt;
+          return value
+              .waypoints[std::min(value.cursor, value.waypoints.size() - 1U)];
+        } else {
+          return std::nullopt;
+        }
+      },
+      step);
+}
+
+/**
+ * @brief Converts string for this subsystem.
+ *
+ * Arguments:
+ * - @p objective: Supplies objective input to the operation.
+ *
+ * Returns:
+ * - `std::string_view` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::string_view toString(PlanObjective objective) noexcept {
+  switch (objective) {
+    case PlanObjective::Distance:
+      return "distance";
+    case PlanObjective::CrowdDensity:
+      return "crowd_density";
+    case PlanObjective::EncounterRisk:
+      return "encounter_risk";
+    case PlanObjective::FlowOpposition:
+      return "flow_opposition";
+    case PlanObjective::RegionPreference:
+      return "region";
+    case PlanObjective::HallwayPreference:
+      return "hallway";
+    case PlanObjective::TrailPreference:
+      return "trail";
+    case PlanObjective::ConveyorPreference:
+      return "conveyor";
+    case PlanObjective::SkeletonDistance:
+      return "skeleton_distance";
+    case PlanObjective::HighwayDistance:
+      return "highway_distance";
+  }
+  return "distance";
+}
+
+/**
+ * @brief Performs the objective description operation for this subsystem.
+ *
+ * Arguments:
+ * - @p objective: Supplies objective input to the operation.
+ *
+ * Returns:
+ * - `std::string_view` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::string_view objectiveDescription(PlanObjective objective) noexcept {
+  switch (objective) {
+    case PlanObjective::Distance:
+      return "minimize metric or graph path cost";
+    case PlanObjective::CrowdDensity:
+      return "prefer routes through areas with lower estimated crowd density";
+    case PlanObjective::EncounterRisk:
+      return "prefer routes with lower estimated crowd-related navigation risk";
+    case PlanObjective::FlowOpposition:
+      return "prefer routes aligned with favorable crowd movement patterns";
+    case PlanObjective::RegionPreference:
+      return "prefer learned regions and their entrance and doorway affordances";
+    case PlanObjective::HallwayPreference:
+      return "prefer travel through learned hallway structures";
+    case PlanObjective::TrailPreference:
+      return "prefer previously learned successful trails";
+    case PlanObjective::ConveyorPreference:
+      return "prefer areas associated with repeated successful traversal";
+    case PlanObjective::SkeletonDistance:
+      return "navigate the learned region-connectivity skeleton and supporting subtrails";
+    case PlanObjective::HighwayDistance:
+      return "prefer the learned highway network and its intersections";
+  }
+  return "unknown planning objective";
+}
+
+/**
+ * @brief Performs the metadata operation for this subsystem.
+ *
+ * Arguments:
+ * - None.
+ *
+ * Returns:
+ * - `PlannerMetadata` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+PlannerMetadata Planner::metadata() const {
+  return {std::string(name()), planFamily(), objective(),
+          std::string(toString(objective())),
+          std::string(objectiveDescription(objective())), {}, false,
+          planFamily() == PlanFamily::Model};
+}
+
+/**
+ * @brief Performs the current revision operation for this subsystem.
+ *
+ * Arguments:
+ * - @p request: Supplies request input to the operation.
+ * - @p dependency: Supplies dependency input to the operation.
+ *
+ * Returns:
+ * - `domain::Revision` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+domain::Revision currentRevision(const PlanningRequest& request,
+                                 domain::ModelDependency dependency) noexcept {
+  using D = domain::ModelDependency;
+  switch (dependency) {
+    case D::StaticMapGeometry:
+      return request.static_map ? request.static_map->geometry_revision : 0U;
+    case D::StaticOccupancy:
+      return request.static_map ? request.static_map->occupancy_revision : 0U;
+    case D::CrowdDensity:
+    case D::CrowdRisk:
+    case D::CrowdFlow:
+      return request.crowd_model ? request.crowd_model->revisionOf(dependency)
+                                 : 0U;
+    case D::PlannerConfiguration:
+      return request.planner_configuration_revision;
+    default:
+      return request.spatial_model
+                 ? request.spatial_model->revisionOf(dependency)
+                 : 0U;
+  }
+}
+
+/**
+ * @brief Performs the stale plan reasons operation for this subsystem.
+ *
+ * Arguments:
+ * - @p plan: Supplies plan input to the operation.
+ * - @p request: Supplies request input to the operation.
+ * - @p start_tolerance: Supplies start tolerance input to the operation.
+ * - @p target_tolerance: Supplies target tolerance input to the operation.
+ * - @p execution_invalidated: Supplies execution invalidated input to the
+ * operation.
+ *
+ * Returns:
+ * - `std::vector<std::string>` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::vector<std::string> stalePlanReasons(
+    const PlanResult& plan, const PlanningRequest& request,
+    domain::Distance start_tolerance, domain::Distance target_tolerance,
+    bool execution_invalidated) {
+  auto reasons = dependencyChangeReasons(plan.dependency_revisions, request);
+  if (plan.task_id != request.task_id) reasons.push_back("task_changed");
+  if (domain::distance(plan.planned_start.position, request.start.position)
+          .meters() > start_tolerance.meters())
+    reasons.push_back("start_moved_beyond_tolerance");
+  if (domain::distance(plan.planned_goal, request.goal).meters() >
+      target_tolerance.meters())
+    reasons.push_back("target_moved_beyond_tolerance");
+  if (execution_invalidated)
+    reasons.push_back("execution_invalidated_remaining_route");
+  return reasons;
+}
+
+/**
+ * @brief Performs the dependency change reasons operation for this
+ * subsystem.
+ *
+ * Arguments:
+ * - @p consumed: Supplies consumed input to the operation.
+ * - @p request: Supplies request input to the operation.
+ *
+ * Returns:
+ * - `std::vector<std::string>` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+std::vector<std::string> dependencyChangeReasons(
+    const domain::DependencyRevisions& consumed,
+    const PlanningRequest& request) {
+  std::vector<std::string> reasons;
+  for (const auto& [dependency, revision] : consumed) {
+    const auto current = currentRevision(request, dependency);
+    if (current != revision) {
+      std::ostringstream reason;
+      reason << "dependency_changed:" << domain::toString(dependency) << ':'
+             << revision << "->" << current;
+      reasons.push_back(reason.str());
+    }
+  }
+  return reasons;
+}
+
+/**
+ * @brief Performs the attach dependency snapshot operation for this
+ * subsystem.
+ *
+ * Arguments:
+ * - @p plan: Supplies plan input to the operation.
+ * - @p request: Supplies request input to the operation.
+ * - @p dependencies: Supplies dependencies input to the operation.
+ *
+ * Returns:
+ * - No value; effects are applied to owned state or outputs.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+void attachDependencySnapshot(
+    PlanResult& plan, const PlanningRequest& request,
+    std::vector<domain::ModelDependency> dependencies) {
+  dependencies.push_back(domain::ModelDependency::PlannerConfiguration);
+  std::sort(dependencies.begin(), dependencies.end(), [](auto a, auto b) {
+    return static_cast<int>(a) < static_cast<int>(b);
+  });
+  dependencies.erase(std::unique(dependencies.begin(), dependencies.end()),
+                     dependencies.end());
+  plan.dependency_revisions.clear();
+  for (const auto dependency : dependencies)
+    plan.dependency_revisions[dependency] =
+        currentRevision(request, dependency);
+  plan.planned_start = request.start;
+  plan.planned_goal = request.goal;
+  plan.task_id = request.task_id;
+  plan.planner_configuration_revision =
+      request.planner_configuration_revision;
+  plan.operating_mode = request.static_map
+                            ? PlanningOperatingMode::MapEnabled
+                            : PlanningOperatingMode::Mapless;
+  plan.static_map_contributed = request.static_map != nullptr;
+  if (plan.created_at == std::chrono::steady_clock::time_point{})
+    plan.created_at = std::chrono::steady_clock::now();
+  if (plan.hierarchical) {
+    plan.hierarchical->id = plan.plan_id;
+    plan.hierarchical->family = plan.family;
+    plan.hierarchical->dependency_revisions = plan.dependency_revisions;
+    plan.hierarchical->planned_start = request.start;
+    plan.hierarchical->planned_goal = request.goal;
+    plan.hierarchical->task_id = request.task_id;
+    plan.hierarchical->planner_configuration_revision =
+        request.planner_configuration_revision;
+    plan.hierarchical->created_at = plan.created_at;
+    plan.hierarchical->operating_mode = plan.operating_mode;
+    plan.hierarchical->static_map_contributed = plan.static_map_contributed;
+    plan.hierarchical->geometric_path = plan.path;
+  }
+}
+
+}  // namespace semaforr::planning
