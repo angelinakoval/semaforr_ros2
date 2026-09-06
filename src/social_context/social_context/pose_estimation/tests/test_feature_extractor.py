@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import sys
-from feature_extractor import FeatureExtractor
+from social_context.pose_estimation.src.tracking.feature_extractor import FeatureExtractor
 
 extractor = FeatureExtractor()
 

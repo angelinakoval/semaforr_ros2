@@ -1,5 +1,6 @@
-from utils import *
-from wrapper import *
+import os
+from social_context.trajectory_prediction.utils import *
+from social_context.trajectory_prediction.wrapper import *
 
 """
 Get the raw data from another ros2 node
@@ -41,8 +42,16 @@ print(input_traj.shape)
 
 obs_seq_len = 5
 pred_seq_len = 5
-load_path = '/Users/ericguan/Documents/semaforr_ros2/social_context/social_context/trajectory_prediction/gst_updated/results/gst_default/sj'
-args_path = '/Users/ericguan/Documents/semaforr_ros2/social_context/social_context/trajectory_prediction/gst_updated/results/gst_default/sj/checkpoint/args.pickle'
+# Resolved relative to this file instead of a hardcoded absolute path, so it
+# works regardless of whose machine/home directory this is checked out on.
+_CHECKPOINT_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'gst_updated', 'results',
+    'gst_default',
+    'sj'
+)
+load_path = _CHECKPOINT_DIR
+args_path = os.path.join(_CHECKPOINT_DIR, 'checkpoint', 'args.pickle')
 
 output_traj, output_binary_mask = predict(obs_seq_len,
             pred_seq_len, 

@@ -1,4 +1,4 @@
-from trajectory_prediction.pipeline import pipeline
+from social_context.trajectory_prediction.pipeline import pipeline
 
 social_context_model = {
     'A': {
