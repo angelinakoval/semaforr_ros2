@@ -19,7 +19,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/FormationGroup.msg"
   "msg/FormationGroupArray.msg"
   DEPENDENCIES std_msgs geometry_msgs
-  )
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
