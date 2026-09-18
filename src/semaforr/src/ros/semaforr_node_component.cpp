@@ -867,7 +867,7 @@ class SemaFORRNode::Impl {
     }
     const auto node_shared = node_.shared_from_this();
     transform_listener_ = std::make_unique<tf2_ros::TransformListener>(
-        transform_buffer_, node_shared, false);
+        transform_buffer_, node_shared, true);
     const rclcpp::QoS sensor_qos = makeQos(runtime_.sensor_qos);
     pose_subscription_ =
         node_.create_subscription<geometry_msgs::msg::PoseStamped>(
