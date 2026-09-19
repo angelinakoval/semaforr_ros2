@@ -17,10 +17,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <hunav_msgs/msg/agents.hpp>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <rclcpp/time.hpp>
+#include <semaforr/decision/advisors/social/approach_direction_advisor.hpp>
+#include <semaforr/decision/advisors/social/formation_courtesy_advisor.hpp>
 #include <semaforr/decision/advisors/social/social_navigation_advisor.hpp>
 #include <semaforr/decision/decision_coordinator.hpp>
 #include <semaforr/domain/crowd_model.hpp>
@@ -37,6 +41,7 @@ namespace {
 using semaforr::domain::Action;
 using semaforr::domain::ActionType;
 using semaforr::domain::CrowdObservation;
+using semaforr::domain::FormationObservation;
 using semaforr::domain::PedestrianObservation;
 using semaforr::domain::PredictedPosition;
 using semaforr::domain::SocialTimestamp;
@@ -70,6 +75,7 @@ PedestrianObservation pedestrian(
           1.0,
           {0.04, 0.0, 0.0, 0.04},
           "none",
+          std::nullopt,
           std::nullopt};
 }
 
@@ -92,6 +98,41 @@ CrowdObservation crowd(PedestrianObservation person) {
       std::chrono::duration_cast<SocialTimestamp>(observed_at);
   observation.data_age = std::chrono::milliseconds(100);
   observation.pedestrians.push_back(std::move(person));
+  observation.validate();
+  return observation;
+}
+
+/**
+ * @brief Performs the crowd with formation operation for this subsystem.
+ *
+ * Arguments:
+ * - @p member_a: Supplies member a input to the operation.
+ * - @p member_b: Supplies member b input to the operation.
+ * - @p center: Supplies center input to the operation.
+ * - @p formation_confidence: Supplies formation confidence input to the
+ * operation.
+ *
+ * Returns:
+ * - `CrowdObservation` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+CrowdObservation crowdWithFormation(PedestrianObservation member_a,
+                                    PedestrianObservation member_b,
+                                    semaforr::domain::Point2D center,
+                                    double formation_confidence = 1.0) {
+  CrowdObservation observation;
+  observation.frame_id = "map";
+  observation.observed_at =
+      std::chrono::duration_cast<SocialTimestamp>(observed_at);
+  observation.data_age = std::chrono::milliseconds(100);
+  member_a.formation_index = 0U;
+  member_b.formation_index = 0U;
+  observation.pedestrians.push_back(std::move(member_a));
+  observation.pedestrians.push_back(std::move(member_b));
+  observation.formations.push_back(
+      FormationObservation{{"a", "b"}, "vis-a-vis", center, formation_confidence});
   observation.validate();
   return observation;
 }
@@ -318,6 +359,182 @@ TEST(SocialNavigation, RecordedTrajectoryChangesDeterministicAction) {
   EXPECT_NE(social.action, baseline.action);
 }
 
+TEST(FormationCourtesy, PenalizesActionThatCrossesFormationOSpace) {
+  const semaforr::domain::ActionSpace action_space({1.0, 2.0}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U),
+                                       Action(ActionType::TurnLeft, 1U)};
+  auto world = worldWith(crowdWithFormation(
+      pedestrian("a", 1.0, -0.3, 0.0, 0.0), pedestrian("b", 1.0, 0.3, 0.0, 0.0),
+      {1.0, 0.0}));
+
+  semaforr::decision::FormationCourtesyAdvisor courtesy(
+      semaforr::decision::FormationCourtesyAdvisorConfiguration{});
+  const auto evaluation = courtesy.evaluate(
+      {world, &action_space, candidates, std::nullopt}, candidates);
+
+  ASSERT_TRUE(evaluation.participated);
+  EXPECT_LT(scoreFor(evaluation, Action(ActionType::Forward, 1U)),
+           scoreFor(evaluation, Action(ActionType::TurnLeft, 1U)));
+}
+
+TEST(FormationCourtesy, DoesNotPenalizeWhenPathStaysClear) {
+  const semaforr::domain::ActionSpace action_space({1.0, 2.0}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+  auto world = worldWith(crowdWithFormation(
+      pedestrian("a", 10.0, 9.7, 0.0, 0.0), pedestrian("b", 10.0, 10.3, 0.0, 0.0),
+      {10.0, 10.0}));
+
+  semaforr::decision::FormationCourtesyAdvisor courtesy(
+      semaforr::decision::FormationCourtesyAdvisorConfiguration{});
+  const auto evaluation = courtesy.evaluate(
+      {world, &action_space, candidates, std::nullopt}, candidates);
+
+  ASSERT_TRUE(evaluation.participated);
+  EXPECT_DOUBLE_EQ(scoreFor(evaluation, Action(ActionType::Forward, 1U)), 0.0);
+}
+
+TEST(FormationCourtesy, DeclinesWhenNoFormationsPresent) {
+  const semaforr::domain::ActionSpace action_space({1.0}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+  auto world = worldWith(crowd(pedestrian("solo", 1.0, 0.0, 0.0, 0.0)));
+
+  semaforr::decision::FormationCourtesyAdvisor courtesy(
+      semaforr::decision::FormationCourtesyAdvisorConfiguration{});
+  EXPECT_FALSE(
+      courtesy.evaluate({world, &action_space, candidates, std::nullopt},
+                        candidates)
+          .participated);
+}
+
+TEST(FormationCourtesy, DeclinesWhenFormationBelowMinimumConfidence) {
+  const semaforr::domain::ActionSpace action_space({1.0}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+  auto world = worldWith(
+      crowdWithFormation(pedestrian("a", 1.0, -0.3, 0.0, 0.0),
+                        pedestrian("b", 1.0, 0.3, 0.0, 0.0), {1.0, 0.0}, 0.2));
+
+  semaforr::decision::FormationCourtesyAdvisor courtesy(
+      semaforr::decision::FormationCourtesyAdvisorConfiguration{});
+  EXPECT_FALSE(
+      courtesy.evaluate({world, &action_space, candidates, std::nullopt},
+                        candidates)
+          .participated);
+}
+
+TEST(FormationCourtesy, DeclinesWhenCrowdDataAbsent) {
+  const semaforr::domain::ActionSpace action_space({1.0}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+
+  semaforr::decision::FormationCourtesyAdvisor courtesy(
+      semaforr::decision::FormationCourtesyAdvisorConfiguration{});
+  EXPECT_FALSE(
+      courtesy.evaluate({world, &action_space, candidates, std::nullopt},
+                        candidates)
+          .participated);
+}
+
+TEST(ApproachDirection, PenalizesApproachFromBehindMoreThanFromFront) {
+  // Robot at the origin moves Forward to (0.8, 0.0). A pedestrian sits at
+  // (1.0, 0.0), 0.2m past that point.
+  const semaforr::domain::ActionSpace action_space({0.8}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+
+  auto facing_away = pedestrian("away", 1.0, 0.0, 0.0, 0.0);
+  facing_away.facing = semaforr::domain::Angle(0.0);  // faces +x, back to robot
+  auto behind_world = worldWith(crowd(facing_away));
+
+  auto facing_toward = pedestrian("toward", 1.0, 0.0, 0.0, 0.0);
+  facing_toward.facing =
+      semaforr::domain::Angle(std::numbers::pi);  // faces -x, toward robot
+  auto front_world = worldWith(crowd(facing_toward));
+
+  semaforr::decision::ApproachDirectionAdvisor advisor(
+      semaforr::decision::ApproachDirectionAdvisorConfiguration{});
+  const auto behind_result = advisor.evaluate(
+      {behind_world, &action_space, candidates, std::nullopt}, candidates);
+  const auto front_result = advisor.evaluate(
+      {front_world, &action_space, candidates, std::nullopt}, candidates);
+
+  ASSERT_TRUE(behind_result.participated);
+  ASSERT_TRUE(front_result.participated);
+  EXPECT_LT(scoreFor(behind_result, Action(ActionType::Forward, 1U)),
+           scoreFor(front_result, Action(ActionType::Forward, 1U)));
+}
+
+TEST(ApproachDirection, DoesNotPenalizeWhenBeyondApproachRadius) {
+  const semaforr::domain::ActionSpace action_space({0.8}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+  auto far = pedestrian("far", 10.0, 10.0, 0.0, 0.0);
+  far.facing = semaforr::domain::Angle(0.0);
+  auto world = worldWith(crowd(far));
+
+  semaforr::decision::ApproachDirectionAdvisor advisor(
+      semaforr::decision::ApproachDirectionAdvisorConfiguration{});
+  const auto result = advisor.evaluate(
+      {world, &action_space, candidates, std::nullopt}, candidates);
+
+  ASSERT_TRUE(result.participated);
+  EXPECT_DOUBLE_EQ(scoreFor(result, Action(ActionType::Forward, 1U)), 0.0);
+}
+
+TEST(ApproachDirection, DeclinesWhenNoFacingDataAvailable) {
+  const semaforr::domain::ActionSpace action_space({0.8}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+  // pedestrian(...) leaves facing at its default nullopt.
+  auto world = worldWith(crowd(pedestrian("unknown", 1.0, 0.0, 0.0, 0.0)));
+
+  semaforr::decision::ApproachDirectionAdvisor advisor(
+      semaforr::decision::ApproachDirectionAdvisorConfiguration{});
+  EXPECT_FALSE(
+      advisor
+          .evaluate({world, &action_space, candidates, std::nullopt},
+                   candidates)
+          .participated);
+}
+
+TEST(ApproachDirection, DeclinesWhenCrowdDataAbsent) {
+  const semaforr::domain::ActionSpace action_space({0.8}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+
+  semaforr::decision::ApproachDirectionAdvisor advisor(
+      semaforr::decision::ApproachDirectionAdvisorConfiguration{});
+  EXPECT_FALSE(
+      advisor
+          .evaluate({world, &action_space, candidates, std::nullopt},
+                   candidates)
+          .participated);
+}
+
+TEST(ApproachDirection, IgnoresLowConfidencePedestrian) {
+  const semaforr::domain::ActionSpace action_space({0.8}, {0.5});
+  const std::vector<Action> candidates{Action(ActionType::Forward, 1U)};
+  auto close_low_confidence = pedestrian("close", 1.0, 0.0, 0.0, 0.0);
+  close_low_confidence.facing = semaforr::domain::Angle(0.0);
+  close_low_confidence.confidence = 0.1;
+  auto far_confident = pedestrian("far", 10.0, 10.0, 0.0, 0.0);
+  far_confident.facing = semaforr::domain::Angle(0.0);
+  CrowdObservation observation;
+  observation.frame_id = "map";
+  observation.observed_at = std::chrono::duration_cast<SocialTimestamp>(observed_at);
+  observation.data_age = std::chrono::milliseconds(100);
+  observation.pedestrians.push_back(std::move(close_low_confidence));
+  observation.pedestrians.push_back(std::move(far_confident));
+  observation.validate();
+  auto world = worldWith(std::move(observation));
+
+  semaforr::decision::ApproachDirectionAdvisor advisor(
+      semaforr::decision::ApproachDirectionAdvisorConfiguration{});
+  const auto result = advisor.evaluate(
+      {world, &action_space, candidates, std::nullopt}, candidates);
+
+  ASSERT_TRUE(result.participated);
+  EXPECT_DOUBLE_EQ(scoreFor(result, Action(ActionType::Forward, 1U)), 0.0);
+}
+
 TEST(SocialPlanning, DensityAndRiskCostsConsumeLearnedCrowdField) {
   semaforr::domain::CrowdFieldSnapshot field;
   field.geometry = {"map", 10.0, 10.0, 1.0, 0.0, 0.0};
@@ -476,6 +693,32 @@ TEST(SocialObservationBuffer, ConvertsTrackedStateAndSeparatesFreshness) {
             semaforr::ros::SocialObservationStatus::FrameMismatch);
 }
 
+TEST(SocialObservationBuffer, TrackedOrientationConvertsToFacingYaw) {
+  semaforr::ros::SocialObservationBuffer buffer(trackedConfiguration());
+  auto message = trackedMessage();
+  // 90 degrees about Z: (x=0, y=0, z=sin(45deg), w=cos(45deg)).
+  message.people[0].orientation_z = 0.70710678F;
+  message.people[0].orientation_w = 0.70710678F;
+  const rclcpp::Time received(10'100'000'000LL, RCL_ROS_TIME);
+  ASSERT_TRUE(buffer.acceptTracked(message, received));
+  const auto snapshot = buffer.snapshot(received);
+  ASSERT_TRUE(snapshot);
+  ASSERT_TRUE(snapshot->pedestrians[0].facing.has_value());
+  EXPECT_NEAR(snapshot->pedestrians[0].facing->radians(), M_PI_2, 1.0e-4);
+}
+
+TEST(SocialObservationBuffer, DegenerateTrackedOrientationLeavesFacingUnset) {
+  semaforr::ros::SocialObservationBuffer buffer(trackedConfiguration());
+  // trackedMessage() leaves orientation_x/y/z/w at their default zero
+  // values -- a degenerate (zero-norm) quaternion.
+  auto message = trackedMessage();
+  const rclcpp::Time received(10'100'000'000LL, RCL_ROS_TIME);
+  ASSERT_TRUE(buffer.acceptTracked(message, received));
+  const auto snapshot = buffer.snapshot(received);
+  ASSERT_TRUE(snapshot);
+  EXPECT_FALSE(snapshot->pedestrians[0].facing.has_value());
+}
+
 TEST(SocialObservationBuffer, AccumulatesCompleteGstPredictionCycle) {
   auto configuration = trackedConfiguration();
   semaforr::ros::SocialObservationBuffer buffer(configuration);
@@ -626,6 +869,43 @@ TEST(SocialObservationBuffer, HuNavModeUsesVelocityAndSharedDomainType) {
   EXPECT_EQ(snapshot->pedestrians[0].id, "3");
   EXPECT_NEAR(snapshot->pedestrians[0].velocity_mps.y_m, 0.4, 1.0e-6);
   EXPECT_EQ(snapshot->provenance, "hunav_agents");
+}
+
+TEST(SocialObservationBuffer, HuNavYawConvertsDirectlyToFacing) {
+  auto configuration = trackedConfiguration();
+  configuration.input_mode = semaforr::ros::SocialInputMode::Hunav;
+  semaforr::ros::SocialObservationBuffer buffer(configuration);
+  hunav_msgs::msg::Agents message;
+  message.header.frame_id = "map";
+  message.header.stamp.sec = 10;
+  message.agents.resize(1);
+  message.agents[0].id = 3;
+  message.agents[0].type = hunav_msgs::msg::Agent::PERSON;
+  message.agents[0].yaw = 1.2F;
+  const rclcpp::Time received(10'100'000'000LL, RCL_ROS_TIME);
+  ASSERT_TRUE(buffer.acceptHunav(message, received));
+  const auto snapshot = buffer.snapshot(received);
+  ASSERT_TRUE(snapshot);
+  ASSERT_TRUE(snapshot->pedestrians[0].facing.has_value());
+  EXPECT_NEAR(snapshot->pedestrians[0].facing->radians(), 1.2, 1.0e-5);
+}
+
+TEST(SocialObservationBuffer, HuNavNonFiniteYawLeavesFacingUnset) {
+  auto configuration = trackedConfiguration();
+  configuration.input_mode = semaforr::ros::SocialInputMode::Hunav;
+  semaforr::ros::SocialObservationBuffer buffer(configuration);
+  hunav_msgs::msg::Agents message;
+  message.header.frame_id = "map";
+  message.header.stamp.sec = 10;
+  message.agents.resize(1);
+  message.agents[0].id = 3;
+  message.agents[0].type = hunav_msgs::msg::Agent::PERSON;
+  message.agents[0].yaw = std::numeric_limits<float>::quiet_NaN();
+  const rclcpp::Time received(10'100'000'000LL, RCL_ROS_TIME);
+  ASSERT_TRUE(buffer.acceptHunav(message, received));
+  const auto snapshot = buffer.snapshot(received);
+  ASSERT_TRUE(snapshot);
+  EXPECT_FALSE(snapshot->pedestrians[0].facing.has_value());
 }
 
 TEST(SocialObservationBuffer, TrackedAndHuNavPopulateTheSameCrowdDomainModel) {

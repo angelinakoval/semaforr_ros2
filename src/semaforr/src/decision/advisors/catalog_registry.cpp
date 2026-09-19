@@ -10,6 +10,8 @@
 #include <semaforr/decision/advisors/catalog_registry.hpp>
 #include <semaforr/decision/advisors/heuristic_advisor.hpp>
 #include <semaforr/decision/advisors/navigation_advisor.hpp>
+#include <semaforr/decision/advisors/social/approach_direction_advisor.hpp>
+#include <semaforr/decision/advisors/social/formation_courtesy_advisor.hpp>
 #include <semaforr/decision/advisors/social/learned_crowd_advisor.hpp>
 #include <semaforr/decision/advisors/social/social_navigation_advisor.hpp>
 #include <semaforr/decision/tier_registry.hpp>
@@ -200,6 +202,20 @@ void registerAdvisorCatalog(
   learned("crowd_avoid", LearnedCrowdObjective::AvoidDensity);
   learned("risk_avoid", LearnedCrowdObjective::AvoidEncounterRisk);
   learned("flow_follow", LearnedCrowdObjective::PreferFollowingFlow);
+
+  FormationCourtesyAdvisorConfiguration formation_courtesy;
+  formation_courtesy.weight = weight("formation_courtesy");
+  formation_courtesy.advisor_name = "formation_courtesy";
+  registry.registerFactory("formation_courtesy", [formation_courtesy] {
+    return std::make_unique<FormationCourtesyAdvisor>(formation_courtesy);
+  });
+
+  ApproachDirectionAdvisorConfiguration approach_direction;
+  approach_direction.weight = weight("approach_direction");
+  approach_direction.advisor_name = "approach_direction";
+  registry.registerFactory("approach_direction", [approach_direction] {
+    return std::make_unique<ApproachDirectionAdvisor>(approach_direction);
+  });
 }
 
 }  // namespace semaforr::decision

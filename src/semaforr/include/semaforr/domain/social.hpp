@@ -81,6 +81,7 @@ struct PedestrianObservation {
   std::array<double, 4> position_covariance{};
   std::string prediction_source{"none"};
   std::optional<std::size_t> formation_index;
+  std::optional<Angle> facing;
 
   /**
    * @brief Validates package content for this subsystem.
@@ -116,6 +117,9 @@ struct PedestrianObservation {
       throw std::invalid_argument(
           "pedestrian covariance must be finite, symmetric, and "
           "positive semidefinite");
+    }
+    if (facing && !std::isfinite(facing->radians())) {
+      throw std::invalid_argument("pedestrian facing must be finite");
     }
 
     SocialTimestamp previous = observed_at;

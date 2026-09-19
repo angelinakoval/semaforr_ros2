@@ -125,7 +125,7 @@ def test_registered_advisors_planners_tier_one_and_learners_are_cataloged():
     )
     assert advisor_block
     advisors = set(re.findall(r'"([a-z0-9_]+)"', advisor_block.group(1)))
-    assert len(advisors) == 34
+    assert len(advisors) == 36
     advisor_catalog = read("docs/advisor-catalog.md")
     for name in advisors:
         assert f"`{name}`" in advisor_catalog, f"advisor missing: {name}"
@@ -153,7 +153,7 @@ def test_registered_advisors_planners_tier_one_and_learners_are_cataloged():
             tier_source,
         )
     )
-    assert len(tier_one) == 10
+    assert len(tier_one) == 12
     tier_catalog = read("docs/decision-tiers.md")
     for name in tier_one:
         assert f"`{name}`" in tier_catalog, f"Tier-1 component missing: {name}"

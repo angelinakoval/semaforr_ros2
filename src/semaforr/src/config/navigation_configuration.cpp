@@ -1800,7 +1800,9 @@ void validateConfiguration(const Configuration& configuration) {
                                                   "follow",
                                                   "least_angle",
                                                   "spatial_learner",
-                                                  "stay"};
+                                                  "stay",
+                                                  "formation_courtesy",
+                                                  "approach_direction"};
   std::set<std::string> names;
   for (const AdvisorConfiguration& advisor : configuration.advisors) {
     if (!names.insert(advisor.name).second) {

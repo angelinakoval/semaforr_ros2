@@ -128,9 +128,14 @@ add_library(semaforr_advisors SHARED
   src/decision/advisors/social/learned_crowd_advisor.cpp
   src/decision/advisors/navigation_advisor.cpp
   src/decision/obstacle_veto_rule.cpp
+  src/decision/predicted_social_veto.cpp
+  src/decision/sudden_proximity_mandate.cpp
   src/decision/tier_registry.cpp
+  src/decision/advisors/social/approach_direction_advisor.cpp
+  src/decision/advisors/social/formation_courtesy_advisor.cpp
   src/decision/advisors/social/registry.cpp
   src/decision/advisors/social/social_navigation_advisor.cpp
+  src/decision/advisors/social/social_prediction.cpp
 )
 set_target_properties(semaforr_advisors PROPERTIES EXPORT_NAME advisors)
 add_library(semaforr::advisors ALIAS semaforr_advisors)

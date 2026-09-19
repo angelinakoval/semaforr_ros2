@@ -11,6 +11,8 @@
 #include <cmath>
 #include <limits>
 #include <semaforr/decision/obstacle_veto_rule.hpp>
+#include <semaforr/decision/predicted_social_veto.hpp>
+#include <semaforr/decision/sudden_proximity_mandate.hpp>
 #include <semaforr/decision/tier_registry.hpp>
 #include <semaforr/domain/motion_model.hpp>
 #include <stdexcept>
@@ -785,6 +787,10 @@ void registerTierFactories(TierOneRegistry& tier_one,
                            const domain::ActionSpace& action_space,
                            double robot_radius_m, double obstacle_buffer_m,
                            PrecedentConfiguration precedent) {
+  tier_one.registerMandatory("sudden_proximity_mandate", [] {
+    return std::make_unique<SuddenProximityMandate>(
+        SuddenProximityMandateConfiguration{});
+  });
   tier_one.registerMandatory("victory", [action_space] {
     return std::make_unique<VictoryRule>(domain::Distance(0.5), action_space);
   });
@@ -793,6 +799,10 @@ void registerTierFactories(TierOneRegistry& tier_one,
         return std::make_unique<ObstacleVetoRule>(
             action_space.move_distances_m(), robot_radius_m, obstacle_buffer_m);
       });
+  tier_one.registerVeto("predicted_social_veto", [] {
+    return std::make_unique<PredictedSocialVeto>(
+        PredictedSocialVetoConfiguration{});
+  });
   tier_one.registerVeto("not_opposite", [action_space] {
     return std::make_unique<NotOppositeRule>(action_space);
   });

@@ -11,9 +11,10 @@ Target-navigation decisions execute this observable cycle:
 
 1. Hard safety removes actions that violate the platform envelope.
 2. Tier 1 runs in semantic order, independent of C++ interface category:
-   `Victory`, `AvoidObstacles`, `NotOpposite`, Enforcer, `Thru`, `Behind`,
-   `Out`, LLE, `Forward`, and `Precedent`. A mandate ends the cycle
-   immediately; a veto modifies the viable set and processing continues.
+   `SuddenProximityMandate`, `Victory`, `AvoidObstacles`,
+   `PredictedSocialVeto`, `NotOpposite`, Enforcer, `Thru`, `Behind`, `Out`,
+   LLE, `Forward`, and `Precedent`. A mandate ends the cycle immediately; a
+   veto modifies the viable set and processing continues.
 3. After the complete Tier-1 pass, no survivors produces a safe stop and one
    survivor is selected as Tier 1.
 4. Tier 2 runs only when Tier 1 made no decision, no plan is active, and at
@@ -35,13 +36,16 @@ attribution. The same compact trace is exposed in runtime phase diagnostics as
 
 Every configured Tier-1 name is resolved by `TierOneRegistry`; the adapter
 contains no name-specific construction branches. The validated execution
-order is `victory`, `avoid_obstacles`, `not_opposite`, `enforcer`, `thru`,
-`behind`, `out`, `low_level_exploration`, `forward`, `precedent`.
+order is `sudden_proximity_mandate`, `victory`, `avoid_obstacles`,
+`predicted_social_veto`, `not_opposite`, `enforcer`, `thru`, `behind`,
+`out`, `low_level_exploration`, `forward`, `precedent`.
 
 | Registered name | Contract | Current role |
 |---|---|---|
+| `sudden_proximity_mandate` | MandatoryRule | Pauses immediately when a tracked pedestrian is already closer than the emergency distance, regardless of mission state; evaluated before `victory` so an in-progress approach to the target cannot override an already-close person. Declines cleanly when no fresh, confident live crowd observation is available. |
 | `victory` | MandatoryRule | Pauses within target tolerance or turns/moves directly toward a sensed target. |
 | `avoid_obstacles` | VetoRule | Applies the configurable cognitive obstacle veto; it is distinct from non-ablatable hard safety. |
+| `predicted_social_veto` | VetoRule | Rejects actions whose predicted trajectory comes within a minimum separation of a tracked pedestrian's predicted trajectory over the prediction horizon; distinct from `avoid_obstacles`, which only reasons about the current static laser scan. Declines cleanly when no fresh, confident live crowd observation is available. |
 | `not_opposite` | VetoRule | Rejects turns whose predicted heading repeats either of the two latest execution-confirmed orientations. |
 | `enforcer` | PlanOperationalizer | Converts the active grid or typed hierarchical plan step into a local mandate. |
 | `thru` | ReactivePlanner | Pursues the clearer side of a tight opening with interruption and budget handling. |
