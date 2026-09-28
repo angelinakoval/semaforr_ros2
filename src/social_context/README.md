@@ -256,9 +256,32 @@ against perfect, noise-free positions. It does **not** exercise
   shell rc), and that `camera_frame`/`lidar_frame` match your simulation's
   actual TF frame names.
 
+## Known version constraints
+
+- **`numpy` must stay below `2.0`.** MediaPipe 0.10.x and `opencv-python`
+  wheels from this era are built against the numpy 1.x C API; numpy 2.0's ABI
+  break can silently corrupt or crash pose detection. A stray
+  `pip install --upgrade numpy` pulled in by an unrelated package is the usual
+  way this happens. Verified working combination on this setup: `numpy 1.26.4`,
+  `mediapipe 0.10.5`, `opencv-python 4.13.0`.
+- **Python 3.8–3.11 for MediaPipe 0.10.5.** No wheels exist for 3.12+ at that
+  version. ROS 2 Humble's system Python (3.10) is within range.
+- **`trajectory_prediction/requirements.txt` pins an old `torch==1.12.1`**
+  from the original GST research code, but that's not what actually runs the
+  ROS node — `social_context_tracked` executes under the same Python
+  `ros2 launch` uses (system `python3`, not the venv below), and the
+  checkpoint loader (`wrapper.py`, `torch.load(..., weights_only=False)`)
+  has been confirmed working against a much newer `torch 2.13.0` already
+  installed there. Only build the dedicated venv below if you need exact
+  reproducibility with the original GST benchmark scripts
+  (`trajectory_prediction/test.py`, `pec_net`, `mgnn`) — it is not required
+  just to run the live pipeline.
+
 ## Virtual Environment & Dependencies
 
-Running the social context model requires specific Python dependencies.
+Running the social context model's original research/benchmark scripts
+(not the live ROS pipeline — see above) requires specific pinned Python
+dependencies.
 
 1. Create a Python 3.10 virtual environment (recommended: conda).
 2. Install dependencies:
