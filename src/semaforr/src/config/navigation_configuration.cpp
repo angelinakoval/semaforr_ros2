@@ -1592,9 +1592,18 @@ void validateConfiguration(const Configuration& configuration) {
         "configuration: target navigation cannot be disabled when mission "
         "tasks are configured");
   const std::vector<std::string> tier_one_order{
-      "victory", "avoid_obstacles", "not_opposite", "enforcer",
-      "thru",    "behind",          "out",          "low_level_exploration",
-      "forward", "precedent"};
+      "sudden_proximity_mandate",
+      "victory",
+      "avoid_obstacles",
+      "predicted_social_veto",
+      "not_opposite",
+      "enforcer",
+      "thru",
+      "behind",
+      "out",
+      "low_level_exploration",
+      "forward",
+      "precedent"};
   std::size_t previous = 0U;
   bool first_rule = true;
   std::set<std::string> configured_rules;
@@ -1800,7 +1809,9 @@ void validateConfiguration(const Configuration& configuration) {
                                                   "follow",
                                                   "least_angle",
                                                   "spatial_learner",
-                                                  "stay"};
+                                                  "stay",
+                                                  "formation_courtesy",
+                                                  "approach_direction"};
   std::set<std::string> names;
   for (const AdvisorConfiguration& advisor : configuration.advisors) {
     if (!names.insert(advisor.name).second) {

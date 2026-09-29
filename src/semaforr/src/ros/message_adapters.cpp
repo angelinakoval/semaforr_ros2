@@ -15,6 +15,8 @@
 #include <limits>
 #include <semaforr/ros/message_adapters.hpp>
 #include <stdexcept>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
 #include <unordered_set>
 
 namespace semaforr {
@@ -181,6 +183,23 @@ domain::CrowdObservation trackedPeopleToDomain(
     converted.confidence = person.confidence;
     converted.position_covariance =
         covariance(converted.confidence, configuration);
+    const double orientation_norm =
+        person.orientation_x * person.orientation_x +
+        person.orientation_y * person.orientation_y +
+        person.orientation_z * person.orientation_z +
+        person.orientation_w * person.orientation_w;
+    if (std::isfinite(orientation_norm) && orientation_norm > 1.0e-12) {
+      tf2::Quaternion quaternion(person.orientation_x, person.orientation_y,
+                                 person.orientation_z, person.orientation_w);
+      quaternion.normalize();
+      double roll = 0.0;
+      double pitch = 0.0;
+      double yaw = 0.0;
+      tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
+      if (std::isfinite(yaw)) {
+        converted.facing = domain::Angle(yaw);
+      }
+    }
     result.pedestrians.push_back(std::move(converted));
   }
   result.validate();
@@ -225,6 +244,9 @@ domain::CrowdObservation hunavAgentsToDomain(
     converted.confidence = configuration.hunav_confidence;
     converted.position_covariance =
         covariance(converted.confidence, configuration);
+    if (std::isfinite(agent.yaw)) {
+      converted.facing = domain::Angle(agent.yaw);
+    }
     result.pedestrians.push_back(std::move(converted));
   }
   result.validate();

@@ -68,6 +68,8 @@ for algorithm status and known deviations.
 | `crowd_avoid` | Crowd-density snapshot | Penalizes anticipated cells with learned crowd density. |
 | `risk_avoid` | Crowd-risk snapshot | Penalizes anticipated cells with learned encounter and predictive-collision risk. |
 | `flow_follow` | Crowd-flow snapshot | Rewards alignment with learned pedestrian flow. |
+| `formation_courtesy` | Fresh live social observation with confident formations | Penalizes paths predicted to cross a formation's member-derived O-space; declines when no confident formation is present. |
+| `approach_direction` | Fresh live social observation with known pedestrian facing | Penalizes paths that approach a tracked person from their rear arc more than from where they can see the robot coming, scaled continuously by angle and proximity; declines when no pedestrian has known facing data. |
 
 The social master switch disables observation subscription, learning, these
 advisors, and crowd planners together. Missing or stale social evidence causes

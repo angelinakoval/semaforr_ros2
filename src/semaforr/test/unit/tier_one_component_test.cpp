@@ -22,7 +22,10 @@
 #include <semaforr/decision/decision_coordinator.hpp>
 #include <semaforr/decision/hard_safety_filter.hpp>
 #include <semaforr/decision/navigation_engine.hpp>
+#include <semaforr/decision/predicted_social_veto.hpp>
+#include <semaforr/decision/sudden_proximity_mandate.hpp>
 #include <semaforr/decision/tier_registry.hpp>
+#include <semaforr/domain/social.hpp>
 #include <semaforr/planning/reactive_planner.hpp>
 #include <semaforr/spatial/spatial_learning_coordinator.hpp>
 #include <vector>
@@ -31,6 +34,52 @@ namespace {
 
 using semaforr::domain::Action;
 using semaforr::domain::ActionType;
+using semaforr::domain::CrowdObservation;
+using semaforr::domain::PedestrianObservation;
+
+/**
+ * @brief Performs the nearby pedestrian operation for this subsystem.
+ *
+ * Arguments:
+ * - @p x: Supplies x input to the operation.
+ * - @p y: Supplies y input to the operation.
+ * - @p confidence: Supplies confidence input to the operation.
+ * - @p id: Supplies id input to the operation.
+ *
+ * Returns:
+ * - `PedestrianObservation` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+PedestrianObservation nearbyPedestrian(double x, double y,
+                                       double confidence = 1.0,
+                                       std::string id = "1") {
+  return {std::move(id), {x, y}, {0.0, 0.0}, {}, confidence,
+          {0.04, 0.0, 0.0, 0.04},   "none", std::nullopt, std::nullopt};
+}
+
+/**
+ * @brief Performs the crowd with operation for this subsystem.
+ *
+ * Arguments:
+ * - @p people: Supplies people input to the operation.
+ *
+ * Returns:
+ * - `CrowdObservation` containing the operation result.
+ *
+ * Exceptions:
+ * - None documented; validation or dependency failures may propagate.
+ */
+CrowdObservation crowdWith(std::vector<PedestrianObservation> people) {
+  CrowdObservation observation;
+  observation.frame_id = "map";
+  observation.observed_at = std::chrono::seconds(10);
+  observation.data_age = std::chrono::milliseconds(100);
+  observation.pedestrians = std::move(people);
+  observation.validate();
+  return observation;
+}
 
 /**
  * @brief Performs the scan operation for this subsystem.
@@ -284,6 +333,52 @@ class InstallRecoveryPlan final : public semaforr::planning::ReactivePlanner {
   void cancel(semaforr::planning::InterruptionReason) override {}
 };
 
+TEST(SuddenProximityMandate, FiresPauseWhenPedestrianWithinEmergencyDistance) {
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+  world.crowd.update(crowdWith({nearbyPedestrian(0.2, 0.0)}));
+
+  semaforr::decision::SuddenProximityMandate mandate(
+      semaforr::decision::SuddenProximityMandateConfiguration{});
+  const auto decision = mandate.evaluate({world});
+
+  ASSERT_TRUE(decision.has_value());
+  EXPECT_EQ(decision->action, Action::pause());
+  EXPECT_EQ(decision->rule, "SuddenProximityMandate");
+  EXPECT_EQ(decision->explanation,
+            "sudden_proximity_mandate:emergency_pause");
+}
+
+TEST(SuddenProximityMandate, DoesNotFireWhenPedestrianBeyondEmergencyDistance) {
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+  world.crowd.update(crowdWith({nearbyPedestrian(1.0, 0.0)}));
+
+  semaforr::decision::SuddenProximityMandate mandate(
+      semaforr::decision::SuddenProximityMandateConfiguration{});
+  EXPECT_FALSE(mandate.evaluate({world}).has_value());
+}
+
+TEST(SuddenProximityMandate, DeclinesWhenCrowdDataAbsent) {
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+
+  semaforr::decision::SuddenProximityMandate mandate(
+      semaforr::decision::SuddenProximityMandateConfiguration{});
+  EXPECT_FALSE(mandate.evaluate({world}).has_value());
+}
+
+TEST(SuddenProximityMandate, IgnoresLowConfidencePedestrian) {
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+  world.crowd.update(crowdWith({nearbyPedestrian(0.1, 0.0, 0.1, "1"),
+                                nearbyPedestrian(10.0, 10.0, 1.0, "2")}));
+
+  semaforr::decision::SuddenProximityMandate mandate(
+      semaforr::decision::SuddenProximityMandateConfiguration{});
+  EXPECT_FALSE(mandate.evaluate({world}).has_value());
+}
+
 TEST(Victory, VerifiesVisibilityTurnMovePauseAndHighestPriority) {
   const semaforr::domain::ActionSpace actions({0.25, 1.0}, {0.2, 0.5});
   semaforr::decision::VictoryRule victory(semaforr::domain::Distance(0.2),
@@ -396,6 +491,72 @@ TEST(AvoidObstacles, FootprintWidthIncludesOffAxisObstacleReturns) {
 
   semaforr::decision::ObstacleVetoRule centerline_only({0.4}, 0.0, 0.05);
   EXPECT_TRUE(centerline_only.evaluate({world}).empty());
+}
+
+TEST(PredictedSocialVeto, VetoesActionThatPredictsCloseApproach) {
+  const semaforr::domain::ActionSpace action_space({1.0}, {0.5});
+  const std::vector<Action> candidates{Action::pause(),
+                                       Action(ActionType::Forward, 1U)};
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+  world.crowd.update(crowdWith({nearbyPedestrian(1.0, 0.0)}));
+
+  semaforr::decision::PredictedSocialVeto veto(
+      semaforr::decision::PredictedSocialVetoConfiguration{});
+  const auto vetoes = veto.evaluate(
+      {world, &action_space, candidates, std::nullopt});
+
+  ASSERT_FALSE(vetoes.empty());
+  EXPECT_EQ(vetoes.front().action, Action(ActionType::Forward, 1U));
+  EXPECT_EQ(vetoes.front().rule, "PredictedSocialVeto");
+  EXPECT_EQ(vetoes.front().explanation,
+            "predicted_social_veto:minimum_separation");
+}
+
+TEST(PredictedSocialVeto, DoesNotVetoWhenPathStaysClear) {
+  const semaforr::domain::ActionSpace action_space({1.0}, {0.5});
+  const std::vector<Action> candidates{Action::pause(),
+                                       Action(ActionType::Forward, 1U)};
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+  world.crowd.update(crowdWith({nearbyPedestrian(10.0, 10.0)}));
+
+  semaforr::decision::PredictedSocialVeto veto(
+      semaforr::decision::PredictedSocialVetoConfiguration{});
+  EXPECT_TRUE(veto.evaluate({world, &action_space, candidates, std::nullopt})
+                  .empty());
+}
+
+TEST(PredictedSocialVeto, DeclinesWhenCrowdDataAbsent) {
+  const semaforr::domain::ActionSpace action_space({1.0}, {0.5});
+  const std::vector<Action> candidates{Action::pause(),
+                                       Action(ActionType::Forward, 1U)};
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+
+  semaforr::decision::PredictedSocialVeto veto(
+      semaforr::decision::PredictedSocialVetoConfiguration{});
+  EXPECT_TRUE(veto.evaluate({world, &action_space, candidates, std::nullopt})
+                  .empty());
+}
+
+TEST(PredictedSocialVeto, IgnoresLowConfidencePedestrian) {
+  const semaforr::domain::ActionSpace action_space({1.0}, {0.5});
+  const std::vector<Action> candidates{Action::pause(),
+                                       Action(ActionType::Forward, 1U)};
+  semaforr::domain::WorldModel world;
+  world.robot.pose = {{0.0, 0.0}, semaforr::domain::Angle::zero()};
+  // A dangerously close pedestrian below the confidence threshold must be
+  // ignored, while a distant confident pedestrian keeps the observation
+  // usable -- proving the veto filters per-pedestrian rather than only
+  // gating on whether the observation as a whole is usable.
+  world.crowd.update(crowdWith({nearbyPedestrian(1.0, 0.0, 0.1, "1"),
+                                nearbyPedestrian(10.0, 10.0, 1.0, "2")}));
+
+  semaforr::decision::PredictedSocialVeto veto(
+      semaforr::decision::PredictedSocialVetoConfiguration{});
+  EXPECT_TRUE(veto.evaluate({world, &action_space, candidates, std::nullopt})
+                  .empty());
 }
 
 TEST(NotOpposite, UsesOnlyExecutionConfirmedOrientations) {

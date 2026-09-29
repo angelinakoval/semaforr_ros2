@@ -29,8 +29,9 @@ semaforr:
     tiers:
       tier1:
         enabled: true
-        rules: [victory, avoid_obstacles, not_opposite, enforcer, thru,
-                behind, out, low_level_exploration, forward, precedent]
+        rules: [sudden_proximity_mandate, victory, avoid_obstacles,
+                predicted_social_veto, not_opposite, enforcer, thru, behind,
+                out, low_level_exploration, forward, precedent]
         reactive_planners: [thru, behind, out, low_level_exploration]
       tier2:
         enabled: true
@@ -315,15 +316,18 @@ semaforr:
         [goal_progress, goal_progress_linear, clearance,
          clearance_rotation, exploration, social_navigation,
          crowd_avoid, risk_avoid, flow_follow, avoid_revisit,
-         prefer_regions, prefer_highways, prefer_doors, follow_trails]
+         prefer_regions, prefer_highways, prefer_doors, follow_trails,
+         formation_courtesy, approach_direction]
       enabled: [true, true, true, true, true, true, true, true, true,
-                true, true, false, true, true]
+                true, true, false, true, true, true, true]
       weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-                1.0, 1.0, 1.0, 1.0, 1.0]
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
       # Four reserved values per advisor. ROS parameters do not support
       # arrays of mappings, so this remains a validated flat array.
       parameters:
         [0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
          0.0, 0.0, 0.0, 0.0,
          0.0, 0.0, 0.0, 0.0,
          0.0, 0.0, 0.0, 0.0,
