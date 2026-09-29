@@ -233,28 +233,6 @@ against perfect, noise-free positions. It does **not** exercise
 `formation_detector`, HuNav has no equivalent. Revert `social.input.mode` to
 `tracked` afterward.
 
-## Troubleshooting
-
-- **`Package 'semaforr_bridge' not found`**: the terminal hasn't sourced
-  `install/setup.bash` in this workspace. Every terminal needs both
-  `source /opt/ros/humble/setup.bash` and `source ~/semaforr_ros2/install/setup.bash`.
-- **`SemaFORR startup failed: configuration: unknown Tier-1 rule '...'`**:
-  a Tier-1 rule name is missing from `tier_one_order` in
-  `src/config/navigation_configuration.cpp` — a second, independent allowlist
-  from the actual rule registry. Only relevant if you're adding a new Tier-1
-  rule yourself; rebuild after fixing.
-- **A `pose transform unavailable ... extrapolation into the past` warning at
-  startup**: benign and self-resolving — TF catching up right after the node
-  and the simulator both come up, not a sign anything is broken.
-- **`formation_courtesy` never participates**: check `/formation_groups`
-  directly (`ros2 topic echo /formation_groups`) — its `confidence` field
-  must clear `minimum_formation_confidence` (default `0.5` in
-  `FormationCourtesyAdvisorConfiguration`) before SemaFORR will use it, even
-  if `formation_detector` is publishing groups.
-- **No detections at all from MediaPipe**: confirm `MEDIAPIPE_POSE_MODEL_PATH`
-  is set in *this* terminal (it's not persisted unless you added it to your
-  shell rc), and that `camera_frame`/`lidar_frame` match your simulation's
-  actual TF frame names.
 
 ## Known version constraints
 
