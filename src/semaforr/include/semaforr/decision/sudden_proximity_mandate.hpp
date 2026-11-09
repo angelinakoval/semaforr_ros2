@@ -45,7 +45,8 @@ struct SuddenProximityMandateConfiguration {
    */
   std::chrono::nanoseconds maximum_age{std::chrono::milliseconds(750)};
   double minimum_confidence{0.25};
-  double emergency_distance_m{0.4};
+
+  double emergency_distance_m{0.8};
 };
 
 /**

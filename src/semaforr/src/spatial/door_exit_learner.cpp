@@ -104,6 +104,12 @@ void DoorExitLearner::onRebuild() {
     const auto& ranges = episode.observation.laser.ranges_m;
     const auto endpoints = detail::laserEndpoints(episode.observation);
     for (std::size_t index = 1U; index < ranges.size(); ++index) {
+      if (!std::isfinite(ranges[index]) ||
+          !std::isfinite(ranges[index - 1U])) {
+        // A non-finite range means no return within sensor range (a normal,
+        // valid LaserScan value), not a measurable surface to pair with.
+        continue;
+      }
       if (std::abs(ranges[index] - ranges[index - 1U]) <
           minimum_range_jump_m_) {
         continue;
