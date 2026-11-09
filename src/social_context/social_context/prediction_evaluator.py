@@ -6,17 +6,6 @@ from hunav_msgs.msg import Agents
 import math
 from collections import deque
 
-# --- ASSUMPTIONS TO BE FILLED IN ---
-# !!! This is the critical value from Question 1 !!!
-# (e.g., if your model predicts 5.0s, 10.0s, 15.0s, this is 5.0)
-MODEL_PREDICTION_TIMESTEP_SEC = 5.0 # <--- REPLACE THIS
-
-# This is from Question 2. How close in time do the ground truth
-# and prediction need to be to be considered a "match"?
-# (e.g., if /human_states is 10Hz, a 0.1s tolerance is good)
-TIMESTAMP_MATCH_TOLERANCE_SEC = 0.2 # <--- REPLACE THIS
-# ---
-
 def l2_distance(pos1, pos2):
     """Calculates the Euclidean (L2) distance between two (x,y) tuples."""
     return math.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
@@ -24,6 +13,11 @@ def l2_distance(pos1, pos2):
 class PredictionEvaluator(Node):
     def __init__(self):
         super().__init__('prediction_evaluator')
+
+        self.declare_parameter('prediction_step_sec', 1.0)
+        self.declare_parameter('match_tolerance_sec', 0.05)
+        self.prediction_step_sec = self.get_parameter('prediction_step_sec').value
+        self.match_tolerance_sec = self.get_parameter('match_tolerance_sec').value
 
         # This stores predictions we've received but haven't found a matching ground truth for yet
         # Format: [{'agent_id': str, 'target_time': rclpy.time.Time, 'pred_pos': (x,y)}]
@@ -54,8 +48,7 @@ class PredictionEvaluator(Node):
     def prediction_callback(self, msg):
         # This callback receives a prediction
         try:
-            # Parse the frame_id (e.g., "1_pred_0")
-            agent_id, _, step_index_str = msg.header.frame_id.rpartition('_')
+            agent_id, _, step_index_str = msg.header.frame_id.rsplit('_', 2)
             step_index = int(step_index_str) # This will be 0, 1, 2
         except ValueError:
             self.get_logger().warn(f"Could not parse frame_id: {msg.header.frame_id}")
@@ -63,9 +56,7 @@ class PredictionEvaluator(Node):
             
         prediction_made_at = rclpy.time.Time.from_msg(msg.header.stamp)
         
-        # Calculate the *target time* this prediction is FOR
-        # (e.g., if step_index is 2, it's for 3 * 5.0s = 15s in the future)
-        time_offset_sec = (step_index + 1) * MODEL_PREDICTION_TIMESTEP_SEC
+        time_offset_sec = (step_index + 1) * self.prediction_step_sec
         target_time = prediction_made_at + Duration(seconds=time_offset_sec)
 
         # Store this pending evaluation
@@ -101,7 +92,7 @@ class PredictionEvaluator(Node):
                 # Check if the timestamps match within our tolerance
                 time_diff_sec = abs((eval_task['target_time'] - current_time).nanoseconds / 1e9)
 
-                if time_diff_sec < TIMESTAMP_MATCH_TOLERANCE_SEC:
+                if time_diff_sec < self.match_tolerance_sec:
                     # --- WE HAVE A MATCH! ---
                     
                     # 1. Calculate the error

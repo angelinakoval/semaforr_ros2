@@ -97,7 +97,7 @@ semaforr:
       planners:
         enabled: true
       input:
-        mode: tracked
+        mode: hunav  # 'tracked' switched from tracked for Phase 1 pilot recordings: no perception pipeline running, so social advisors need HuNav ground truth to have crowd data at all (2026-10-31)
         tracked_people_topic: /human_poses_3d_tracked_global
         tracked_predictions_topic: /pedestrian_predictions_tracked
         hunav_agents_topic: /human_states
